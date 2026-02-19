@@ -500,7 +500,7 @@ tresult PLUGIN_API Controller::notify(IMessage* message) {
 // --- Dynamic plugin loading ---
 
 std::string Controller::loadPlugin(const std::string& path) {
-    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] loadPlugin called with path: %{public}s", path.c_str());
+    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] loadPlugin: %{public}s", path.c_str());
 
     teardownHostedController();
 
@@ -510,13 +510,11 @@ std::string Controller::loadPlugin(const std::string& path) {
         os_log_error(OS_LOG_DEFAULT, "[VST3MCPWrapper] Failed to load module: %{public}s", error.c_str());
         return error;
     }
-    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] Module loaded successfully");
 
     if (!setupHostedController()) {
-        os_log_error(OS_LOG_DEFAULT, "[VST3MCPWrapper] setupHostedController failed");
+        os_log_error(OS_LOG_DEFAULT, "[VST3MCPWrapper] Failed to set up hosted controller");
         return "Failed to set up hosted controller";
     }
-    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] setupHostedController: success");
 
     // Tell the processor to load the same plugin
     sendLoadMessage(path);
@@ -597,19 +595,48 @@ bool Controller::setupHostedController() {
         return false;
 
     // If the processor hasn't set the controller CID yet, find it ourselves
+    // by creating a temporary component and querying getControllerClassId.
+    // If that fails, the plugin may be a single-component plugin where the
+    // component itself implements IEditController (no separate controller class).
     if (!pluginModule.hasControllerClassID()) {
         auto factory = pluginModule.getFactory();
         if (!factory)
             return false;
+
         auto component = factory->createInstance<IComponent>(pluginModule.getEffectClassID());
-        if (component) {
-            if (component->initialize(hostContext_) == kResultOk) {
-                TUID cid;
-                if (component->getControllerClassId(cid) == kResultOk) {
-                    pluginModule.setControllerClassID(cid);
-                }
+        if (!component)
+            return false;
+
+        if (component->initialize(hostContext_) != kResultOk)
+            return false;
+
+        TUID cid;
+        if (component->getControllerClassId(cid) == kResultOk) {
+            // Separate controller class — store the CID and fall through
+            pluginModule.setControllerClassID(cid);
+            component->terminate();
+        } else {
+            // Single-component plugin: the component itself is the controller.
+            // We create our own instance for the controller side; the processor
+            // will independently create its own instance for audio processing.
+            // Parameter changes flow through our IComponentHandler → param queue
+            // → processor's process(), same as the separate-component path.
+            FUnknownPtr<IEditController> singleCtrl(component);
+            if (!singleCtrl) {
                 component->terminate();
+                return false;
             }
+            os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] Single-component plugin detected");
+            singleCtrl->setComponentHandler(this);
+            {
+                std::lock_guard<std::mutex> lock(hostedControllerMutex_);
+                hostedController_ = IPtr<IEditController>(singleCtrl);
+            }
+            // Don't terminate — component is now our controller.
+            // Don't call connectHostedComponents/syncComponentState here;
+            // the processor hasn't loaded its component yet (LoadPlugin message
+            // is sent after this returns).
+            return true;
         }
     }
 

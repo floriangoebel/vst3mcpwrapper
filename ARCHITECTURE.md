@@ -137,6 +137,17 @@ std::vector<SpeakerArrangement> storedOutputArr_; // from setBusArrangements()
 
 When a hosted plugin is loaded (via MCP, drag-and-drop, or session restore):
 
+**Controller side** (`setupHostedController`):
+```
+1.  Create temp IComponent from factory
+2.  component->getControllerClassId(cid)
+    ├── OK → create separate IEditController from factory using cid
+    └── Fail → queryInterface<IEditController>(component)  [single-component plugin]
+3.  controller->initialize(hostContext)
+4.  controller->setComponentHandler(this)
+```
+
+**Processor side** (`loadHostedPlugin`, triggered by "LoadPlugin" message):
 ```
 1.  Module::create(path)               — load the .vst3 bundle
 2.  factory.createInstance<IComponent>  — create the component
@@ -148,6 +159,10 @@ When a hosted plugin is loaded (via MCP, drag-and-drop, or session restore):
 8.  setActive(true)  [if wrapper is active]
 9.  processorReady_ = true              — audio thread starts forwarding
 ```
+
+### Single-Component Plugins
+
+Some plugins implement both `IComponent` and `IEditController` on the same class (no separate controller). The wrapper detects this in `setupHostedController` when `getControllerClassId` fails: it queries the component for `IEditController` via `queryInterface`. If found, that component instance becomes the controller. The processor independently creates its own component instance for audio processing. Parameter changes flow through the same queue mechanism as separate-component plugins.
 
 ### Latency and Tail
 

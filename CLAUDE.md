@@ -80,7 +80,7 @@ Point your DAW's VST3 scan path to `build/VST3/Debug/` to load the plugin direct
 
 ## MCP Server
 
-Runs on `127.0.0.1:8771` using Streamable HTTP transport (cpp-mcp library). Started when the controller initializes, stopped on terminate.
+Runs on `127.0.0.1:8771` using SSE transport (cpp-mcp library). The server exposes a `/sse` endpoint for Server-Sent Events and a `/message` endpoint for client POST requests. Started when the controller initializes, stopped on terminate.
 
 The MCP server is configured as a project-level MCP server in `.mcp.json`, so Claude Code can connect directly to the hosted plugin when it's running in a DAW. The plugin must be loaded in the DAW before the tools become available.
 
@@ -105,6 +105,7 @@ All parameter tools validate that the requested ID exists before acting. Invalid
 - `ParameterChanges`/`ParameterValueQueue` from `sdk_hosting` are concrete implementations of `IParameterChanges`/`IParamValueQueue`
 - `ConnectionProxy` from `sdk_hosting` wraps `IConnectionPoint` for safe bidirectional messaging between component and controller
 - Not all plugins implement `IConnectionPoint` — connection is attempted but failure is non-fatal
+- **Single-component plugins** (where `IComponent` also implements `IEditController`) are supported — `setupHostedController` detects this via `queryInterface` when `getControllerClassId` fails, and uses the component as the controller directly. The processor and controller sides each create their own instance; parameter changes flow through the same `IComponentHandler` → param queue → `process()` path as separate-component plugins.
 
 ### Plugin Loading Flow
 
@@ -115,6 +116,9 @@ Controller::loadPlugin(path)
    ├── teardownHostedController()
    ├── HostedPluginModule::load(path)
    ├── setupHostedController()
+   │     ├── Create temp IComponent, call getControllerClassId()
+   │     ├── If OK → create separate IEditController from factory
+   │     └── If fails → queryInterface for IEditController (single-component plugin)
    ├── sendMessage("LoadPlugin") → Processor::notify()
    │                                  ├── unloadHostedPlugin()
    │                                  ├── loadHostedPlugin(path)
