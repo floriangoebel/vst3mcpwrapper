@@ -8,10 +8,8 @@
 #include <vector>
 
 namespace VST3MCPWrapper {
-struct ParamChange;
-}
 
-namespace VST3MCPWrapper {
+struct ParamChange;
 
 class Processor : public Steinberg::Vst::AudioEffect {
 public:

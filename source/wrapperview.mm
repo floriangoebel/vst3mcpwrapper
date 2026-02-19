@@ -64,9 +64,7 @@ using namespace Steinberg;
     NSPasteboard* pb = [sender draggingPasteboard];
     NSArray<NSURL*>* urls = [pb readObjectsForClasses:@[[NSURL class]]
                                               options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
-    NSLog(@"[VST3MCPWrapper] draggingEntered: %lu URLs", (unsigned long)urls.count);
     for (NSURL* url in urls) {
-        NSLog(@"[VST3MCPWrapper] dragging URL: %@ ext: %@", url.path, url.pathExtension);
         if ([url.pathExtension isEqualToString:@"vst3"]) {
             _isDragHighlighted = YES;
             [self setNeedsDisplay:YES];
@@ -96,21 +94,11 @@ using namespace Steinberg;
     NSPasteboard* pb = [sender draggingPasteboard];
     NSArray<NSURL*>* urls = [pb readObjectsForClasses:@[[NSURL class]]
                                               options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
-    NSLog(@"[VST3MCPWrapper] performDragOperation: %lu URLs", (unsigned long)urls.count);
     for (NSURL* url in urls) {
-        NSLog(@"[VST3MCPWrapper] URL: %@ extension: %@", url.path, url.pathExtension);
         if ([url.pathExtension isEqualToString:@"vst3"]) {
             std::string path = [url.path UTF8String];
-            NSLog(@"[VST3MCPWrapper] Loading plugin: %s", path.c_str());
             if (_controller) {
-                auto error = _controller->loadPlugin(path);
-                if (error.empty()) {
-                    NSLog(@"[VST3MCPWrapper] loadPlugin succeeded");
-                } else {
-                    NSLog(@"[VST3MCPWrapper] loadPlugin failed: %s", error.c_str());
-                }
-            } else {
-                NSLog(@"[VST3MCPWrapper] ERROR: controller is null");
+                _controller->loadPlugin(path);
             }
             return YES;
         }
@@ -144,7 +132,6 @@ WrapperPlugView::~WrapperPlugView() {
 // --- In-place view switching ---
 
 void WrapperPlugView::switchToHostedView(IPlugView* hostedView) {
-    NSLog(@"[VST3MCPWrapper] switchToHostedView: hostedView=%p parentNSView_=%p", hostedView, parentNSView_);
     if (!hostedView || !parentNSView_)
         return;
 

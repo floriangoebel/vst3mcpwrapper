@@ -1,7 +1,6 @@
 #pragma once
 
 #include "public.sdk/source/vst/vsteditcontroller.h"
-#include "pluginterfaces/vst/ivsteditcontroller.h"
 #include "pluginterfaces/vst/ivstmessage.h"
 
 #include <memory>

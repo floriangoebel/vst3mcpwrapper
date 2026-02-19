@@ -14,25 +14,29 @@ HostedPluginModule& HostedPluginModule::instance() {
     return inst;
 }
 
+void HostedPluginModule::resetState() {
+    // Caller must hold mutex_
+    hostedComponent_ = nullptr;
+    hasControllerCID_ = false;
+    std::memset(controllerCID_, 0, sizeof(TUID));
+    effectClassID_ = {};
+    module_.reset();
+    loaded_ = false;
+    pluginPath_.clear();
+    {
+        std::lock_guard<std::mutex> plock(paramChangeMutex_);
+        pendingParamChanges_.clear();
+    }
+}
+
 bool HostedPluginModule::load(const std::string& path, std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (loaded_ && pluginPath_ == path)
         return true;
 
-    // If a different plugin is loaded, reset state first
-    if (loaded_) {
-        hostedComponent_ = nullptr;
-        hasControllerCID_ = false;
-        std::memset(controllerCID_, 0, sizeof(TUID));
-        module_.reset();
-        loaded_ = false;
-        pluginPath_.clear();
-        {
-            std::lock_guard<std::mutex> plock(paramChangeMutex_);
-            pendingParamChanges_.clear();
-        }
-    }
+    if (loaded_)
+        resetState();
 
     module_ = VST3::Hosting::Module::create(path, error);
     if (!module_)
@@ -55,17 +59,7 @@ bool HostedPluginModule::load(const std::string& path, std::string& error) {
 
 void HostedPluginModule::unload() {
     std::lock_guard<std::mutex> lock(mutex_);
-    hostedComponent_ = nullptr;
-    hasControllerCID_ = false;
-    std::memset(controllerCID_, 0, sizeof(TUID));
-    effectClassID_ = {};
-    module_.reset();
-    loaded_ = false;
-    pluginPath_.clear();
-    {
-        std::lock_guard<std::mutex> plock(paramChangeMutex_);
-        pendingParamChanges_.clear();
-    }
+    resetState();
 }
 
 bool HostedPluginModule::isLoaded() const {
@@ -122,11 +116,10 @@ void HostedPluginModule::pushParamChange(ParamID id, ParamValue value) {
 }
 
 void HostedPluginModule::drainParamChanges(std::vector<ParamChange>& dest) {
-    // Use try_lock so the audio thread never blocks waiting for MCP/GUI producers
-    if (paramChangeMutex_.try_lock()) {
+    // Use try_to_lock so the audio thread never blocks waiting for MCP/GUI producers
+    std::unique_lock<std::mutex> lock(paramChangeMutex_, std::try_to_lock);
+    if (lock.owns_lock()) {
         dest.swap(pendingParamChanges_);
-        pendingParamChanges_.clear();
-        paramChangeMutex_.unlock();
     }
     // If lock not acquired, changes arrive next buffer (~1-5ms later)
 }

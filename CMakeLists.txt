@@ -37,6 +37,7 @@ FetchContent_MakeAvailable(cpp_mcp)
 # --- Plugin target ---
 smtg_add_vst3plugin(VST3MCPWrapper
     source/pluginids.h
+    source/stateformat.h
     source/version.h
     source/hostedplugin.h
     source/hostedplugin.cpp

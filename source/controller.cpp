@@ -1,10 +1,10 @@
 #include "controller.h"
 #include "hostedplugin.h"
+#include "stateformat.h"
 #include "wrapperview.h"
 
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
-#include "pluginterfaces/vst/ivsteditcontroller.h"
 
 #include "public.sdk/source/vst/hosting/connectionproxy.h"
 #include "public.sdk/source/vst/hosting/module.h"
@@ -13,6 +13,7 @@
 #include "mcp_server.h"
 #include "mcp_tool.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <dispatch/dispatch.h>
@@ -36,10 +37,6 @@ static bool isValidParamId(IEditController* ctrl, ParamID targetId) {
     }
     return false;
 }
-
-// State format constants (must match processor.cpp)
-static constexpr char kStateMagic[4] = {'V', 'M', 'C', 'W'};
-static constexpr uint32 kMaxPathLen = 4096;
 
 // ---- MCP Server ----
 struct Controller::MCPServer {
@@ -177,9 +174,7 @@ struct Controller::MCPServer {
 
                 ParamValue value = params["value"].get<double>();
 
-                // Clamp to valid range
-                if (value < 0.0) value = 0.0;
-                if (value > 1.0) value = 1.0;
+                value = std::clamp(value, 0.0, 1.0);
 
                 // Update the hosted controller's internal state (for GUI)
                 ctrl->setParamNormalized(paramId, value);
@@ -439,11 +434,12 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state) {
         teardownHostedController();
         auto& pluginModule = HostedPluginModule::instance();
         std::string error;
-        pluginModule.load(pluginPath, error);
-        setupHostedController();
-        {
-            std::lock_guard<std::mutex> lock(hostedControllerMutex_);
-            currentPluginPath_ = pluginPath;
+        if (pluginModule.load(pluginPath, error)) {
+            setupHostedController();
+            {
+                std::lock_guard<std::mutex> lock(hostedControllerMutex_);
+                currentPluginPath_ = pluginPath;
+            }
         }
     }
 

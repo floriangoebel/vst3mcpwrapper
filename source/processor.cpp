@@ -1,6 +1,7 @@
 #include "processor.h"
 #include "pluginids.h"
 #include "hostedplugin.h"
+#include "stateformat.h"
 
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
 #include "pluginterfaces/base/ibstream.h"
@@ -12,10 +13,6 @@ using namespace Steinberg;
 using namespace Steinberg::Vst;
 
 namespace VST3MCPWrapper {
-
-static constexpr char kStateMagic[4] = {'V', 'M', 'C', 'W'};
-static constexpr uint32 kStateVersion = 1;
-static constexpr uint32 kMaxPathLen = 4096;
 
 Processor::Processor() {
     setControllerClass(kControllerUID);

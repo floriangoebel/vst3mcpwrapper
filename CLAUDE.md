@@ -44,6 +44,7 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `source/wrapperview.h` | WrapperPlugView — IPlugView drop zone interface |
 | `source/wrapperview.mm` | Drop zone NSView — Objective-C++ drag-and-drop implementation |
 | `source/pluginids.h` | FUID definitions for processor and controller |
+| `source/stateformat.h` | Shared state persistence format constants (magic, version, max path length) |
 | `source/version.h` | Plugin version and metadata strings |
 | `source/factory.cpp` | VST3 plugin factory registration (not distributable) |
 | `resource/Info.plist.in` | macOS bundle Info.plist template |

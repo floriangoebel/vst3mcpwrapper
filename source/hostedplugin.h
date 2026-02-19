@@ -53,6 +53,7 @@ public:
 
 private:
     HostedPluginModule() = default;
+    void resetState(); // Caller must hold mutex_
 
     mutable std::mutex mutex_;
     VST3::Hosting::Module::Ptr module_;

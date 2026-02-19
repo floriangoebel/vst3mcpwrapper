@@ -5,7 +5,5 @@
 #define stringCompanyName "VST3MCPWrapper"
 #define stringFileDescription "VST3 plugin wrapper with MCP control"
 #define stringLegalCopyright "(c) 2026"
-#define stringLegalTrademarks ""
 
 #define FULL_VERSION_STR "0.1.0"
-#define VERSION_STR "0.1.0"
