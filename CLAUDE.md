@@ -26,12 +26,13 @@ DAW  <-->  VST3MCPWrapper (our plugin)  <-->  Hosted VST3 Plugin (e.g. Neutron 5
 
 ```
 MCP set_parameter ──┐
-                    ├──> pushParamChange() ──> [queue] ──> Processor::process()
-GUI performEdit ────┘                                      injects into ProcessData::inputParameterChanges
-                                                           ──> hostedProcessor_->process()
+                    ├──> pushParamChange() ──> [mutex-guarded queue] ──> Processor::process()
+GUI performEdit ────┘                           try_lock on drain         injects into
+                                                                          ProcessData::inputParameterChanges
+                                                                          ──> hostedProcessor_->process()
 ```
 
-MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to update the GUI immediately.
+MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to update the GUI immediately. The audio thread uses `try_lock` to drain the queue — it never blocks.
 
 ## Source Files
 
@@ -87,12 +88,15 @@ The MCP server is configured as a project-level MCP server in `.mcp.json`, so Cl
 
 | Tool | Description |
 |---|---|
-| `list_parameters` | Lists all hosted plugin parameters (id, title, units, value, display) |
-| `get_parameter` | Get a single parameter's current value by ID |
-| `set_parameter` | Set a parameter's normalized value (0.0–1.0) by ID. Updates both GUI and audio processor. |
+| `list_parameters` | Lists all hosted plugin parameters (id, title, units, normalizedValue, displayValue, defaultNormalizedValue, stepCount, canAutomate) |
+| `get_parameter` | Get a single parameter's current value by ID. Validates ID exists. |
+| `set_parameter` | Set a parameter's normalized value (0.0–1.0) by ID. Validates ID exists. Updates both GUI and audio processor. |
 | `list_available_plugins` | Lists all VST3 plugins installed on the system |
-| `load_plugin` | Load a VST3 plugin by file path (dispatched to main thread) |
+| `load_plugin` | Load a VST3 plugin by file path. Dispatched to main thread via `dispatch_async` + future. Returns success or error. |
+| `unload_plugin` | Unload the currently hosted plugin and return to the drop zone |
 | `get_loaded_plugin` | Get the currently loaded plugin path |
+
+All parameter tools validate that the requested ID exists before acting. Invalid IDs return `isError: true`.
 
 ## VST3 Hosting Notes
 
@@ -123,10 +127,19 @@ Controller::loadPlugin(path)
 ```
 [4 bytes] magic: "VMCW"
 [4 bytes] version: uint32 = 1
-[4 bytes] pathLen: uint32
+[4 bytes] pathLen: uint32 (capped at 4096)
 [pathLen bytes] UTF-8 plugin path
 [remaining] hosted component state
 ```
+
+### Threading Safety
+
+- **Audio thread** uses `try_lock` to drain the parameter queue — never blocks
+- **MCP load/unload** use `dispatch_async` + `std::promise/std::future` with a shared `alive` flag and 5-second timeout — prevents deadlock during shutdown (dispatched blocks check `alive` before accessing the controller; handlers time out if the main thread is blocked in `stop()`)
+- **Processor stores bus arrangements** from `setBusArrangements()` and replays them when loading a plugin mid-session
+- **Latency/tail forwarding** — `getLatencySamples()`/`getTailSamples()` forward to hosted plugin
+
+See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi-instance roadmap.
 
 ## Known Limitations (MVP)
 
@@ -135,6 +148,7 @@ Controller::loadPlugin(path)
 
 ## Conventions
 
+- **Documentation must stay in sync with code.** Any code change must include corresponding updates to CLAUDE.md, ARCHITECTURE.md, and any other affected documentation. The repository must always be in an internally consistent and correct state — no stale descriptions, no outdated diagrams, no mismatched tool descriptions.
 - All source code in `source/`, resources in `resource/`
 - Namespace: `VST3MCPWrapper`
 - Not distributable (`flags = 0` in factory) — processor and controller share state via singleton

@@ -13,7 +13,10 @@
 #include "mcp_server.h"
 #include "mcp_tool.h"
 
+#include <atomic>
+#include <chrono>
 #include <dispatch/dispatch.h>
+#include <future>
 #include <os/log.h>
 
 using namespace Steinberg;
@@ -23,13 +26,26 @@ namespace VST3MCPWrapper {
 
 static constexpr int kMCPServerPort = 8771;
 
+// Check if a parameter ID exists in the hosted controller's parameter list.
+static bool isValidParamId(IEditController* ctrl, ParamID targetId) {
+    int32 count = ctrl->getParameterCount();
+    for (int32 i = 0; i < count; ++i) {
+        ParameterInfo info;
+        if (ctrl->getParameterInfo(i, info) == kResultOk && info.id == targetId)
+            return true;
+    }
+    return false;
+}
+
 // State format constants (must match processor.cpp)
 static constexpr char kStateMagic[4] = {'V', 'M', 'C', 'W'};
+static constexpr uint32 kMaxPathLen = 4096;
 
 // ---- MCP Server ----
 struct Controller::MCPServer {
     std::unique_ptr<mcp::server> server;
     std::thread serverThread;
+    std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>>(true);
 
     void start(Controller* controller) {
         mcp::server::configuration conf;
@@ -106,6 +122,14 @@ struct Controller::MCPServer {
                 }
 
                 ParamID paramId = params["id"].get<uint32>();
+
+                if (!isValidParamId(ctrl.get(), paramId)) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "Parameter ID " + std::to_string(paramId) + " not found"}}}},
+                        {"isError", true}
+                    };
+                }
+
                 ParamValue value = ctrl->getParamNormalized(paramId);
 
                 String128 displayStr;
@@ -143,6 +167,14 @@ struct Controller::MCPServer {
                 }
 
                 ParamID paramId = params["id"].get<uint32>();
+
+                if (!isValidParamId(ctrl.get(), paramId)) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "Parameter ID " + std::to_string(paramId) + " not found"}}}},
+                        {"isError", true}
+                    };
+                }
+
                 ParamValue value = params["value"].get<double>();
 
                 // Clamp to valid range
@@ -198,22 +230,92 @@ struct Controller::MCPServer {
             .build();
 
         server->register_tool(loadPluginTool,
-            [controller](const mcp::json& params, const std::string& session_id) -> mcp::json {
+            [controller, alive = this->alive](const mcp::json& params, const std::string& session_id) -> mcp::json {
                 std::string path = params["path"].get<std::string>();
 
-                // Dispatch to main thread since loadPlugin touches VST3 lifecycle objects
-                std::string pathCopy = path;
-                Controller* ctrl = controller;
+                if (!*alive) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "Plugin is shutting down"}}}},
+                        {"isError", true}
+                    };
+                }
+
+                auto promise = std::make_shared<std::promise<std::string>>();
+                auto future = promise->get_future();
+                auto flag = alive;
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    ctrl->loadPlugin(pathCopy);
+                    if (!*flag) {
+                        promise->set_value("Plugin is shutting down");
+                        return;
+                    }
+                    promise->set_value(controller->loadPlugin(path));
                 });
 
+                if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "Load plugin timed out"}}}},
+                        {"isError", true}
+                    };
+                }
+                auto error = future.get();
+
+                if (!error.empty()) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "Failed to load plugin: " + error}}}},
+                        {"isError", true}
+                    };
+                }
+
                 mcp::json result = {
-                    {"status", "loading"},
+                    {"status", "loaded"},
                     {"path", path}
                 };
                 return {
                     {"content", {{{"type", "text"}, {"text", result.dump(2)}}}}
+                };
+            });
+
+        // --- unload_plugin tool ---
+        auto unloadPluginTool = mcp::tool_builder("unload_plugin")
+            .with_description("Unload the currently hosted VST3 plugin and return to the drop zone")
+            .build();
+
+        server->register_tool(unloadPluginTool,
+            [controller, alive = this->alive](const mcp::json& params, const std::string& session_id) -> mcp::json {
+                if (!*alive) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "Plugin is shutting down"}}}},
+                        {"isError", true}
+                    };
+                }
+
+                if (!controller->isPluginLoaded()) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "No plugin is currently loaded"}}}},
+                        {"isError", true}
+                    };
+                }
+
+                auto promise = std::make_shared<std::promise<void>>();
+                auto future = promise->get_future();
+                auto flag = alive;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (*flag) {
+                        controller->unloadPlugin();
+                    }
+                    promise->set_value();
+                });
+
+                if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+                    return {
+                        {"content", {{{"type", "text"}, {"text", "Unload plugin timed out"}}}},
+                        {"isError", true}
+                    };
+                }
+                future.get();
+
+                return {
+                    {"content", {{{"type", "text"}, {"text", "Plugin unloaded"}}}}
                 };
             });
 
@@ -241,6 +343,7 @@ struct Controller::MCPServer {
     }
 
     void stop() {
+        *alive = false;
         if (server) {
             server->stop();
         }
@@ -311,17 +414,23 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state) {
         return kResultOk;
 
     uint32 version = 0;
-    if (state->read(&version, sizeof(version), &numBytesRead) != kResultOk)
+    if (state->read(&version, sizeof(version), &numBytesRead) != kResultOk
+        || numBytesRead != sizeof(version))
         return kResultOk;
 
     uint32 pathLen = 0;
-    if (state->read(&pathLen, sizeof(pathLen), &numBytesRead) != kResultOk)
+    if (state->read(&pathLen, sizeof(pathLen), &numBytesRead) != kResultOk
+        || numBytesRead != sizeof(pathLen))
+        return kResultOk;
+
+    if (pathLen > kMaxPathLen)
         return kResultOk;
 
     std::string pluginPath;
     if (pathLen > 0) {
         pluginPath.resize(pathLen);
-        if (state->read(pluginPath.data(), pathLen, &numBytesRead) != kResultOk)
+        if (state->read(pluginPath.data(), pathLen, &numBytesRead) != kResultOk
+            || numBytesRead != static_cast<int32>(pathLen))
             return kResultOk;
     }
 
@@ -332,7 +441,10 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state) {
         std::string error;
         pluginModule.load(pluginPath, error);
         setupHostedController();
-        currentPluginPath_ = pluginPath;
+        {
+            std::lock_guard<std::mutex> lock(hostedControllerMutex_);
+            currentPluginPath_ = pluginPath;
+        }
     }
 
     // Forward remaining state to hosted controller
@@ -387,7 +499,7 @@ tresult PLUGIN_API Controller::notify(IMessage* message) {
 
 // --- Dynamic plugin loading ---
 
-void Controller::loadPlugin(const std::string& path) {
+std::string Controller::loadPlugin(const std::string& path) {
     os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] loadPlugin called with path: %{public}s", path.c_str());
 
     teardownHostedController();
@@ -396,31 +508,57 @@ void Controller::loadPlugin(const std::string& path) {
     std::string error;
     if (!pluginModule.load(path, error)) {
         os_log_error(OS_LOG_DEFAULT, "[VST3MCPWrapper] Failed to load module: %{public}s", error.c_str());
-        return;
+        return error;
     }
     os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] Module loaded successfully");
 
-    bool controllerOk = setupHostedController();
-    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] setupHostedController: %{public}s", controllerOk ? "success" : "failed");
+    if (!setupHostedController()) {
+        os_log_error(OS_LOG_DEFAULT, "[VST3MCPWrapper] setupHostedController failed");
+        return "Failed to set up hosted controller";
+    }
+    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] setupHostedController: success");
 
     // Tell the processor to load the same plugin
     sendLoadMessage(path);
 
-    currentPluginPath_ = path;
+    {
+        std::lock_guard<std::mutex> lock(hostedControllerMutex_);
+        currentPluginPath_ = path;
+    }
 
     // Switch the active view in-place (drop zone → hosted plugin GUI)
     auto ctrl = getHostedController();
-    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] activeView_=%p hostedController=%p", activeView_, ctrl.get());
     if (activeView_ && ctrl) {
         auto* hostedPlugView = ctrl->createView("editor");
-        os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] hosted createView returned: %p", hostedPlugView);
         if (hostedPlugView) {
             activeView_->switchToHostedView(hostedPlugView);
-            os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] switchToHostedView completed");
         }
     }
 
     // Also tell the DAW about the I/O change (bus arrangements may differ)
+    if (componentHandler) {
+        componentHandler->restartComponent(kIoChanged);
+    }
+
+    return {};
+}
+
+void Controller::unloadPlugin() {
+    os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] unloadPlugin called");
+
+    teardownHostedController();
+
+    // Tell the processor to unload
+    if (auto msg = owned(allocateMessage())) {
+        msg->setMessageID("UnloadPlugin");
+        sendMessage(msg);
+    }
+
+    // Switch the active view back to the drop zone
+    if (activeView_) {
+        activeView_->switchToDropZone();
+    }
+
     if (componentHandler) {
         componentHandler->restartComponent(kIoChanged);
     }
@@ -445,12 +583,12 @@ void Controller::teardownHostedController() {
         std::lock_guard<std::mutex> lock(hostedControllerMutex_);
         ctrl = hostedController_;
         hostedController_ = nullptr;
+        currentPluginPath_.clear();
     }
     if (ctrl) {
         ctrl->setComponentHandler(nullptr);
         ctrl->terminate();
     }
-    currentPluginPath_.clear();
 }
 
 bool Controller::setupHostedController() {

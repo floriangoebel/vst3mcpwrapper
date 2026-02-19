@@ -15,6 +15,7 @@ namespace VST3MCPWrapper {
 
 static constexpr char kStateMagic[4] = {'V', 'M', 'C', 'W'};
 static constexpr uint32 kStateVersion = 1;
+static constexpr uint32 kMaxPathLen = 4096;
 
 Processor::Processor() {
     setControllerClass(kControllerUID);
@@ -66,6 +67,14 @@ bool Processor::loadHostedPlugin(const std::string& path) {
     hostedProcessor_ = IPtr<IAudioProcessor>(proc);
     currentPluginPath_ = path;
 
+    // Activate hosted plugin's audio and event buses
+    for (int32 i = 0; i < component->getBusCount(kAudio, kInput); ++i)
+        component->activateBus(kAudio, kInput, i, true);
+    for (int32 i = 0; i < component->getBusCount(kAudio, kOutput); ++i)
+        component->activateBus(kAudio, kOutput, i, true);
+    for (int32 i = 0; i < component->getBusCount(kEvent, kInput); ++i)
+        component->activateBus(kEvent, kInput, i, true);
+
     // Extract controller class ID for the controller to use
     TUID controllerCID;
     if (component->getControllerClassId(controllerCID) == kResultOk) {
@@ -74,6 +83,15 @@ bool Processor::loadHostedPlugin(const std::string& path) {
 
     // Share the hosted component so the controller can connect to it
     pluginModule.setHostedComponent(hostedComponent_);
+
+    // Replay stored bus arrangements
+    if (!storedInputArr_.empty() || !storedOutputArr_.empty()) {
+        hostedProcessor_->setBusArrangements(
+            storedInputArr_.empty() ? nullptr : storedInputArr_.data(),
+            static_cast<int32>(storedInputArr_.size()),
+            storedOutputArr_.empty() ? nullptr : storedOutputArr_.data(),
+            static_cast<int32>(storedOutputArr_.size()));
+    }
 
     // Replay current processing setup if we have one
     if (currentSetup_.sampleRate > 0) {
@@ -113,6 +131,10 @@ tresult PLUGIN_API Processor::setBusArrangements(
     SpeakerArrangement* inputs, int32 numIns,
     SpeakerArrangement* outputs, int32 numOuts)
 {
+    // Store for replay when loading a hosted plugin mid-session
+    storedInputArr_.assign(inputs, inputs + numIns);
+    storedOutputArr_.assign(outputs, outputs + numOuts);
+
     if (hostedProcessor_) {
         hostedProcessor_->setBusArrangements(inputs, numIns, outputs, numOuts);
     }
@@ -125,6 +147,18 @@ tresult PLUGIN_API Processor::setupProcessing(ProcessSetup& setup) {
         hostedProcessor_->setupProcessing(setup);
     }
     return AudioEffect::setupProcessing(setup);
+}
+
+uint32 PLUGIN_API Processor::getLatencySamples() {
+    if (hostedProcessor_)
+        return hostedProcessor_->getLatencySamples();
+    return 0;
+}
+
+uint32 PLUGIN_API Processor::getTailSamples() {
+    if (hostedProcessor_)
+        return hostedProcessor_->getTailSamples();
+    return 0;
 }
 
 tresult PLUGIN_API Processor::canProcessSampleSize(int32 symbolicSampleSize) {
@@ -143,21 +177,45 @@ tresult PLUGIN_API Processor::process(ProcessData& data) {
         pluginModule.drainParamChanges(drainBuffer_);
 
         if (!drainBuffer_.empty()) {
-            // Create parameter changes to inject
-            ParameterChanges inputChanges(static_cast<int32>(drainBuffer_.size()));
+            // Merge DAW automation changes with our queued MCP/GUI changes
+            int32 dawParamCount = data.inputParameterChanges
+                ? data.inputParameterChanges->getParameterCount() : 0;
+            ParameterChanges mergedChanges(
+                dawParamCount + static_cast<int32>(drainBuffer_.size()));
 
+            // Copy DAW automation changes first
+            if (data.inputParameterChanges) {
+                for (int32 i = 0; i < dawParamCount; ++i) {
+                    auto* srcQueue = data.inputParameterChanges->getParameterData(i);
+                    if (!srcQueue) continue;
+                    int32 index;
+                    auto* dstQueue = mergedChanges.addParameterData(
+                        srcQueue->getParameterId(), index);
+                    if (!dstQueue) continue;
+                    int32 pointCount = srcQueue->getPointCount();
+                    for (int32 p = 0; p < pointCount; ++p) {
+                        int32 sampleOffset;
+                        ParamValue value;
+                        if (srcQueue->getPoint(p, sampleOffset, value) == kResultOk) {
+                            int32 pointIndex;
+                            dstQueue->addPoint(sampleOffset, value, pointIndex);
+                        }
+                    }
+                }
+            }
+
+            // Add queued MCP/GUI changes (appended after DAW points for same param)
             for (auto& change : drainBuffer_) {
                 int32 index;
-                auto* queue = inputChanges.addParameterData(change.id, index);
+                auto* queue = mergedChanges.addParameterData(change.id, index);
                 if (queue) {
                     int32 pointIndex;
                     queue->addPoint(0, change.value, pointIndex);
                 }
             }
 
-            // Temporarily replace inputParameterChanges
             auto* origInputChanges = data.inputParameterChanges;
-            data.inputParameterChanges = &inputChanges;
+            data.inputParameterChanges = &mergedChanges;
             auto result = hostedProcessor_->process(data);
             data.inputParameterChanges = origInputChanges;
             return result;
@@ -213,11 +271,16 @@ tresult PLUGIN_API Processor::setState(IBStream* state) {
     }
 
     uint32 version = 0;
-    if (state->read(&version, sizeof(version), &numBytesRead) != kResultOk)
+    if (state->read(&version, sizeof(version), &numBytesRead) != kResultOk
+        || numBytesRead != sizeof(version))
         return kResultFalse;
 
     uint32 pathLen = 0;
-    if (state->read(&pathLen, sizeof(pathLen), &numBytesRead) != kResultOk)
+    if (state->read(&pathLen, sizeof(pathLen), &numBytesRead) != kResultOk
+        || numBytesRead != sizeof(pathLen))
+        return kResultFalse;
+
+    if (pathLen > kMaxPathLen)
         return kResultFalse;
 
     std::string pluginPath;
@@ -295,6 +358,11 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
                 sendMessage(msg);
             }
         }
+        return kResultOk;
+    }
+
+    if (strcmp(message->getMessageID(), "UnloadPlugin") == 0) {
+        unloadHostedPlugin();
         return kResultOk;
     }
 

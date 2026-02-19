@@ -103,8 +103,12 @@ using namespace Steinberg;
             std::string path = [url.path UTF8String];
             NSLog(@"[VST3MCPWrapper] Loading plugin: %s", path.c_str());
             if (_controller) {
-                _controller->loadPlugin(path);
-                NSLog(@"[VST3MCPWrapper] loadPlugin returned");
+                auto error = _controller->loadPlugin(path);
+                if (error.empty()) {
+                    NSLog(@"[VST3MCPWrapper] loadPlugin succeeded");
+                } else {
+                    NSLog(@"[VST3MCPWrapper] loadPlugin failed: %s", error.c_str());
+                }
             } else {
                 NSLog(@"[VST3MCPWrapper] ERROR: controller is null");
             }
@@ -150,7 +154,7 @@ void WrapperPlugView::switchToHostedView(IPlugView* hostedView) {
     // Remove any previous hosted view
     removeHostedView();
 
-    hostedView_ = hostedView;
+    hostedView_ = owned(hostedView);
 
     // Set ourselves as the hosted view's frame so we intercept resize requests
     hostedView_->setFrame(this);
@@ -223,7 +227,7 @@ tresult PLUGIN_API WrapperPlugView::attached(void* parent, FIDString type) {
     if (ctrl) {
         auto* hostedPlugView = ctrl->createView("editor");
         if (hostedPlugView) {
-            hostedView_ = hostedPlugView;
+            hostedView_ = owned(hostedPlugView);
             hostedView_->setFrame(this);
             hostedView_->attached(parent, type);
             return kResultOk;

@@ -50,7 +50,9 @@ public:
     Steinberg::IPtr<Steinberg::Vst::IEditController> getHostedController() const;
 
     // Dynamic plugin loading — called from drop zone view and MCP tools
-    void loadPlugin(const std::string& path);
+    // Returns empty string on success, error message on failure.
+    std::string loadPlugin(const std::string& path);
+    void unloadPlugin();
     bool isPluginLoaded() const;
     std::string getCurrentPluginPath() const;
 

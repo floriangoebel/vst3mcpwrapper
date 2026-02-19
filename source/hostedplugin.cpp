@@ -122,9 +122,13 @@ void HostedPluginModule::pushParamChange(ParamID id, ParamValue value) {
 }
 
 void HostedPluginModule::drainParamChanges(std::vector<ParamChange>& dest) {
-    std::lock_guard<std::mutex> lock(paramChangeMutex_);
-    dest.swap(pendingParamChanges_);
-    pendingParamChanges_.clear();
+    // Use try_lock so the audio thread never blocks waiting for MCP/GUI producers
+    if (paramChangeMutex_.try_lock()) {
+        dest.swap(pendingParamChanges_);
+        pendingParamChanges_.clear();
+        paramChangeMutex_.unlock();
+    }
+    // If lock not acquired, changes arrive next buffer (~1-5ms later)
 }
 
 std::string utf16ToUtf8(const TChar* str, int maxLen) {

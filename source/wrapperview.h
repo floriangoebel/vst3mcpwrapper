@@ -2,6 +2,9 @@
 
 #include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/base/funknown.h"
+#include "pluginterfaces/base/smartpointer.h"
+
+#include <atomic>
 
 namespace VST3MCPWrapper {
 
@@ -55,10 +58,10 @@ private:
 
     Controller* controller_;
     Steinberg::IPlugFrame* hostFrame_ = nullptr;       // DAW's plug frame
-    Steinberg::IPlugView* hostedView_ = nullptr;       // Hosted plugin's view (not ref-counted here)
+    Steinberg::IPtr<Steinberg::IPlugView> hostedView_;   // Hosted plugin's view (ref-counted)
     void* parentNSView_ = nullptr;                      // Cached parent NSView* from attached()
     void* dropZoneView_ = nullptr;                      // Our DropZoneView NSView*
-    Steinberg::uint32 refCount_ = 1;
+    std::atomic<Steinberg::uint32> refCount_{1};
 
     static constexpr int kDefaultWidth = 400;
     static constexpr int kDefaultHeight = 300;
