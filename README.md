@@ -30,7 +30,7 @@ cmake --build build --target VST3MCPWrapper
 
 The built plugin is at `build/VST3/Debug/VST3MCPWrapper.vst3`.
 
-All dependencies (VST3 SDK, cpp-mcp) are fetched automatically — no manual downloads needed. First build takes a few minutes; subsequent builds are fast.
+All dependencies (VST3 SDK, cpp-mcp) are fetched automatically — no manual downloads needed. The build includes ad-hoc code signing so the plugin is accepted by hosts with hardened runtime (e.g. Ableton Live). First build takes a few minutes; subsequent builds are fast.
 
 ## Setup
 
@@ -149,7 +149,7 @@ This is an alpha release with the following known limitations:
 - **Single instance** — only one wrapper instance can run at a time (singleton architecture, fixed MCP port). Loading a second instance in the same DAW session will conflict.
 - **Fixed MCP port** — the server always binds to port 8771. No error handling if the port is already in use.
 - **No preset management** — you can't list or load the hosted plugin's presets via MCP yet
-- **Not code-signed** — you may need to allow unsigned plugins in your DAW or system settings
+- **Ad-hoc signed** — the build applies an ad-hoc code signature, which works for local use but is not notarized for distribution
 
 ## Project Structure
 

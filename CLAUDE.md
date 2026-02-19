@@ -76,6 +76,7 @@ Point your DAW's VST3 scan path to `build/VST3/Debug/` to load the plugin direct
 - `SMTG_CREATE_PLUGIN_LINK OFF` — prevents symlink conflicts with existing VST3 folder
 - Custom `Info.plist.in` needed for correct `CFBundlePackageType` (`BNDL`) on macOS
 - `PkgInfo` file generated via post-build step for macOS bundle recognition
+- Ad-hoc code signing via post-build `codesign --force --sign -` — required for hosts with hardened runtime (e.g. Ableton Live)
 - `memorystream.cpp` is not in any SDK library target — use header-only `ResizableMemoryIBStream` instead
 
 ## MCP Server
@@ -140,7 +141,9 @@ Controller::loadPlugin(path)
 
 - **Audio thread** uses `try_lock` to drain the parameter queue — never blocks
 - **MCP load/unload** use `dispatch_async` + `std::promise/std::future` with a shared `alive` flag and 5-second timeout — prevents deadlock during shutdown (dispatched blocks check `alive` before accessing the controller; handlers time out if the main thread is blocked in `stop()`)
-- **Processor stores bus arrangements** from `setBusArrangements()` and replays them when loading a plugin mid-session
+- **Processor stores DAW state** — bus arrangements, activation, and processing flags are stored and replayed when loading a plugin mid-session (`wrapperActive_`, `wrapperProcessing_`, `storedInputArr_`/`storedOutputArr_`, `currentSetup_`)
+- **`setProcessing` forwarding** — the wrapper overrides `setProcessing()` to forward to the hosted processor. This is critical: `AudioEffect::setProcessing()` is a no-op (`kNotImplemented`), so without forwarding, hosted plugins never get told to start processing.
+- **Bus activation** — only the first audio input, first audio output, and first event input bus are activated on the hosted plugin. Extra buses (sidechain, etc.) are explicitly deactivated since the wrapper doesn't provide ProcessData buffers for them.
 - **Latency/tail forwarding** — `getLatencySamples()`/`getTailSamples()` forward to hosted plugin
 
 See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi-instance roadmap.

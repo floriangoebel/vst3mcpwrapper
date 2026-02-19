@@ -67,13 +67,17 @@ bool Processor::loadHostedPlugin(const std::string& path) {
     hostedProcessor_ = IPtr<IAudioProcessor>(proc);
     currentPluginPath_ = path;
 
-    // Activate hosted plugin's audio and event buses
+    // Activate only the buses that match our wrapper's layout (1 audio in, 1 audio out,
+    // 1 event in). Deactivate any extra buses (e.g. sidechain) since we don't provide
+    // ProcessData buffers for them.
     for (int32 i = 0; i < component->getBusCount(kAudio, kInput); ++i)
-        component->activateBus(kAudio, kInput, i, true);
+        component->activateBus(kAudio, kInput, i, i == 0);
     for (int32 i = 0; i < component->getBusCount(kAudio, kOutput); ++i)
-        component->activateBus(kAudio, kOutput, i, true);
+        component->activateBus(kAudio, kOutput, i, i == 0);
     for (int32 i = 0; i < component->getBusCount(kEvent, kInput); ++i)
-        component->activateBus(kEvent, kInput, i, true);
+        component->activateBus(kEvent, kInput, i, i == 0);
+    for (int32 i = 0; i < component->getBusCount(kEvent, kOutput); ++i)
+        component->activateBus(kEvent, kOutput, i, false);
 
     // Extract controller class ID for the controller to use
     TUID controllerCID;
@@ -106,6 +110,10 @@ void Processor::unloadHostedPlugin() {
     processorReady_ = false;
 
     if (hostedComponent_) {
+        if (hostedProcessing_) {
+            hostedProcessor_->setProcessing(false);
+            hostedProcessing_ = false;
+        }
         if (hostedActive_) {
             hostedComponent_->setActive(false);
             hostedActive_ = false;
@@ -120,11 +128,21 @@ void Processor::unloadHostedPlugin() {
 }
 
 tresult PLUGIN_API Processor::setActive(TBool state) {
+    wrapperActive_ = state;
     if (hostedComponent_) {
         hostedComponent_->setActive(state);
         hostedActive_ = state;
     }
     return AudioEffect::setActive(state);
+}
+
+tresult PLUGIN_API Processor::setProcessing(TBool state) {
+    wrapperProcessing_ = state;
+    if (hostedProcessor_) {
+        hostedProcessor_->setProcessing(state);
+        hostedProcessing_ = state;
+    }
+    return kResultOk;
 }
 
 tresult PLUGIN_API Processor::setBusArrangements(
@@ -342,13 +360,19 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
         if (message->getAttributes()->getBinary("path", data, size) == kResultOk && size > 0) {
             std::string path(static_cast<const char*>(data), size);
 
-            bool wasActive = hostedActive_;
             unloadHostedPlugin();
             loadHostedPlugin(path);
 
-            if (wasActive && hostedComponent_) {
+            // Replay activation and processing state. On first load, these were
+            // never set because setActive()/setProcessing() were called by the DAW
+            // before any hosted component existed — use wrapper flags to replay.
+            if (wrapperActive_ && hostedComponent_) {
                 hostedComponent_->setActive(true);
                 hostedActive_ = true;
+            }
+            if (wrapperProcessing_ && hostedProcessor_) {
+                hostedProcessor_->setProcessing(true);
+                hostedProcessing_ = true;
             }
 
             // Send acknowledgment back to controller

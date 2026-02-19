@@ -24,6 +24,7 @@ public:
     Steinberg::tresult PLUGIN_API initialize(Steinberg::FUnknown* context) override;
     Steinberg::tresult PLUGIN_API terminate() override;
     Steinberg::tresult PLUGIN_API setActive(Steinberg::TBool state) override;
+    Steinberg::tresult PLUGIN_API setProcessing(Steinberg::TBool state) override;
     Steinberg::tresult PLUGIN_API setBusArrangements(
         Steinberg::Vst::SpeakerArrangement* inputs, Steinberg::int32 numIns,
         Steinberg::Vst::SpeakerArrangement* outputs, Steinberg::int32 numOuts) override;
@@ -45,7 +46,10 @@ private:
 
     Steinberg::IPtr<Steinberg::Vst::IComponent> hostedComponent_;
     Steinberg::IPtr<Steinberg::Vst::IAudioProcessor> hostedProcessor_;
-    bool hostedActive_ = false;
+    bool wrapperActive_ = false;      // Whether the DAW has activated our processor
+    bool wrapperProcessing_ = false;  // Whether the DAW has called setProcessing(true)
+    bool hostedActive_ = false;       // Whether the hosted component is active
+    bool hostedProcessing_ = false;   // Whether the hosted processor is processing
     std::atomic<bool> processorReady_{false};
 
     Steinberg::FUnknown* hostContext_ = nullptr;

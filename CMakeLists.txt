@@ -96,6 +96,11 @@ if(APPLE)
             "$<TARGET_BUNDLE_DIR:VST3MCPWrapper>/Contents/PkgInfo"
         COMMENT "Creating PkgInfo"
     )
+    # Ad-hoc sign the bundle so hosts with hardened runtime (e.g. Ableton) accept it
+    add_custom_command(TARGET VST3MCPWrapper POST_BUILD
+        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:VST3MCPWrapper>"
+        COMMENT "Ad-hoc code signing VST3MCPWrapper"
+    )
     set_target_properties(VST3MCPWrapper PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.vst3mcpwrapper.plugin"
         MACOSX_BUNDLE_BUNDLE_NAME "VST3MCPWrapper"

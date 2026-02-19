@@ -131,6 +131,8 @@ The processor stores DAW configuration so it can be replayed when a hosted plugi
 ProcessSetup currentSetup_;                      // from setupProcessing()
 std::vector<SpeakerArrangement> storedInputArr_;  // from setBusArrangements()
 std::vector<SpeakerArrangement> storedOutputArr_; // from setBusArrangements()
+bool wrapperActive_;                              // from setActive()
+bool wrapperProcessing_;                          // from setProcessing()
 ```
 
 ### Loading Sequence
@@ -153,11 +155,12 @@ When a hosted plugin is loaded (via MCP, drag-and-drop, or session restore):
 2.  factory.createInstance<IComponent>  — create the component
 3.  component->initialize(hostContext)  — initialize
 4.  QueryInterface<IAudioProcessor>     — get the processor interface
-5.  activateBus(audio/event, in/out)    — activate all buses
+5.  activateBus(bus 0 only, deactivate extras) — match wrapper's 1-in/1-out layout
 6.  setBusArrangements(stored)          — replay DAW's bus config
 7.  setupProcessing(currentSetup_)      — replay sample rate, block size
 8.  setActive(true)  [if wrapper is active]
-9.  processorReady_ = true              — audio thread starts forwarding
+9.  setProcessing(true)  [if wrapper is processing]
+10. processorReady_ = true              — audio thread starts forwarding
 ```
 
 ### Single-Component Plugins
@@ -172,10 +175,11 @@ Some plugins implement both `IComponent` and `IEditController` on the same class
 
 ```
 1.  processorReady_ = false             — audio thread stops forwarding
-2.  setActive(false)  [if active]
-3.  component->terminate()
-4.  release all IPtr references
-5.  clear stored plugin path
+2.  setProcessing(false)  [if processing]
+3.  setActive(false)  [if active]
+4.  component->terminate()
+5.  release all IPtr references
+6.  clear stored plugin path
 ```
 
 ### State Format (v1)
