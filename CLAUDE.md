@@ -44,6 +44,7 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `source/wrapperview.h` | WrapperPlugView — IPlugView drop zone interface |
 | `source/wrapperview.mm` | Drop zone NSView — Objective-C++ drag-and-drop implementation |
 | `source/pluginids.h` | FUID definitions for processor and controller |
+| `source/mcp_param_handlers.h` | Extracted MCP parameter tool handlers: `isValidParamId()`, `handleListParameters()`, `handleGetParameter()`, `handleSetParameter()` — testable inline functions used by controller's MCP server |
 | `source/stateformat.h` | Shared state persistence format: constants (magic, version, max path length) and `writeStateHeader()`/`readStateHeader()` helper functions |
 | `source/version.h` | Plugin version and metadata strings |
 | `source/factory.cpp` | VST3 plugin factory registration (not distributable) |

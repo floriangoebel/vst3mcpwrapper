@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "hostedplugin.h"
+#include "mcp_param_handlers.h"
 #include "stateformat.h"
 #include "wrapperview.h"
 
@@ -13,7 +14,6 @@
 #include "mcp_server.h"
 #include "mcp_tool.h"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <dispatch/dispatch.h>
@@ -26,17 +26,6 @@ using namespace Steinberg::Vst;
 namespace VST3MCPWrapper {
 
 static constexpr int kMCPServerPort = 8771;
-
-// Check if a parameter ID exists in the hosted controller's parameter list.
-static bool isValidParamId(IEditController* ctrl, ParamID targetId) {
-    int32 count = ctrl->getParameterCount();
-    for (int32 i = 0; i < count; ++i) {
-        ParameterInfo info;
-        if (ctrl->getParameterInfo(i, info) == kResultOk && info.id == targetId)
-            return true;
-    }
-    return false;
-}
 
 // ---- MCP Server ----
 struct Controller::MCPServer {
@@ -61,45 +50,7 @@ struct Controller::MCPServer {
         server->register_tool(listParamsTool,
             [controller](const mcp::json& params, const std::string& session_id) -> mcp::json {
                 auto ctrl = controller->getHostedController();
-                if (!ctrl) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "No hosted plugin loaded"}}}},
-                        {"isError", true}
-                    };
-                }
-
-                int32 paramCount = ctrl->getParameterCount();
-                mcp::json paramList = mcp::json::array();
-
-                for (int32 i = 0; i < paramCount; ++i) {
-                    ParameterInfo info;
-                    if (ctrl->getParameterInfo(i, info) == kResultOk) {
-                        std::string title = utf16ToUtf8(info.title);
-                        std::string units = utf16ToUtf8(info.units);
-                        ParamValue value = ctrl->getParamNormalized(info.id);
-
-                        String128 displayStr;
-                        std::string display;
-                        if (ctrl->getParamStringByValue(info.id, value, displayStr) == kResultOk) {
-                            display = utf16ToUtf8(displayStr);
-                        }
-
-                        paramList.push_back({
-                            {"id", info.id},
-                            {"title", title},
-                            {"units", units},
-                            {"normalizedValue", value},
-                            {"displayValue", display},
-                            {"defaultNormalizedValue", info.defaultNormalizedValue},
-                            {"stepCount", info.stepCount},
-                            {"canAutomate", (info.flags & ParameterInfo::kCanAutomate) != 0}
-                        });
-                    }
-                }
-
-                return {
-                    {"content", {{{"type", "text"}, {"text", paramList.dump(2)}}}}
-                };
+                return handleListParameters(ctrl.get());
             });
 
         // --- get_parameter tool ---
@@ -111,39 +62,8 @@ struct Controller::MCPServer {
         server->register_tool(getParamTool,
             [controller](const mcp::json& params, const std::string& session_id) -> mcp::json {
                 auto ctrl = controller->getHostedController();
-                if (!ctrl) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "No hosted plugin loaded"}}}},
-                        {"isError", true}
-                    };
-                }
-
                 ParamID paramId = params["id"].get<uint32>();
-
-                if (!isValidParamId(ctrl.get(), paramId)) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "Parameter ID " + std::to_string(paramId) + " not found"}}}},
-                        {"isError", true}
-                    };
-                }
-
-                ParamValue value = ctrl->getParamNormalized(paramId);
-
-                String128 displayStr;
-                std::string display;
-                if (ctrl->getParamStringByValue(paramId, value, displayStr) == kResultOk) {
-                    display = utf16ToUtf8(displayStr);
-                }
-
-                mcp::json result = {
-                    {"id", paramId},
-                    {"normalizedValue", value},
-                    {"displayValue", display}
-                };
-
-                return {
-                    {"content", {{{"type", "text"}, {"text", result.dump(2)}}}}
-                };
+                return handleGetParameter(ctrl.get(), paramId);
             });
 
         // --- set_parameter tool ---
@@ -156,49 +76,9 @@ struct Controller::MCPServer {
         server->register_tool(setParamTool,
             [controller](const mcp::json& params, const std::string& session_id) -> mcp::json {
                 auto ctrl = controller->getHostedController();
-                if (!ctrl) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "No hosted plugin loaded"}}}},
-                        {"isError", true}
-                    };
-                }
-
                 ParamID paramId = params["id"].get<uint32>();
-
-                if (!isValidParamId(ctrl.get(), paramId)) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "Parameter ID " + std::to_string(paramId) + " not found"}}}},
-                        {"isError", true}
-                    };
-                }
-
                 ParamValue value = params["value"].get<double>();
-
-                value = std::clamp(value, 0.0, 1.0);
-
-                // Update the hosted controller's internal state (for GUI)
-                ctrl->setParamNormalized(paramId, value);
-
-                // Queue the change for the audio processor
-                HostedPluginModule::instance().pushParamChange(paramId, value);
-
-                // Read back to confirm
-                ParamValue newValue = ctrl->getParamNormalized(paramId);
-                String128 displayStr;
-                std::string display;
-                if (ctrl->getParamStringByValue(paramId, newValue, displayStr) == kResultOk) {
-                    display = utf16ToUtf8(displayStr);
-                }
-
-                mcp::json result = {
-                    {"id", paramId},
-                    {"normalizedValue", newValue},
-                    {"displayValue", display}
-                };
-
-                return {
-                    {"content", {{{"type", "text"}, {"text", result.dump(2)}}}}
-                };
+                return handleSetParameter(ctrl.get(), paramId, value);
             });
 
         // --- list_available_plugins tool ---

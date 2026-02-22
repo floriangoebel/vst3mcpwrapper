@@ -19,6 +19,7 @@ add_executable(VST3MCPWrapper_Tests
     test_processor_lifecycle.cpp
     test_processor_process.cpp
     test_processor_state.cpp
+    test_mcp_param_tools.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
     ${CMAKE_SOURCE_DIR}/source/processor.cpp
 )
@@ -41,6 +42,7 @@ target_link_libraries(VST3MCPWrapper_Tests
     PRIVATE
         sdk
         sdk_hosting
+        mcp
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
@@ -50,6 +52,8 @@ target_include_directories(VST3MCPWrapper_Tests
     PRIVATE
         ${CMAKE_SOURCE_DIR}/source
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${cpp_mcp_SOURCE_DIR}/include
+        ${cpp_mcp_SOURCE_DIR}/common
 )
 
 include(GoogleTest)
