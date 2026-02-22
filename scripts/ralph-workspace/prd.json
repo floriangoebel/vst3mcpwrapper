@@ -127,7 +127,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "The convention is: documentation must stay in sync with code. Run through CLAUDE.md and ARCHITECTURE.md checking every factual claim against the code. Previous stories in this PRD may have changed behavior — make sure docs reflect the new behavior."
     }
   ]

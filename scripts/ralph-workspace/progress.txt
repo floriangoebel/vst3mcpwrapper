@@ -153,3 +153,15 @@ Started: new PRD — Codebase Hardening
   - `GTEST_SKIP()` is the right pattern for tests that need a resource that might not be available — prefer it over `#ifdef` guards inside test bodies
   - `HostedPluginModule::load()` with `loaded_=true` and a different path calls `resetState()` before attempting the new load — if the new load fails, the old plugin is already gone (no rollback)
 ---
+
+## 2026-02-22 - US-008
+- Updated `set_parameter` tool description in both CLAUDE.md and ARCHITECTURE.md to document NaN/Infinity validation (added by US-001)
+- Updated validation note below MCP tools tables to mention `std::isfinite` check for `set_parameter`
+- Removed "No error handling for MCP server port conflicts" from Known Limitations (fixed by US-002)
+- Added MCP server error handling behavior to MCP Server section: try-catch wraps server start, failure logged to stderr, plugin continues without MCP
+- Files changed: `CLAUDE.md`, `ARCHITECTURE.md`
+- **Learnings for future iterations:**
+  - Documentation audit stories should cross-reference all previous stories in the PRD to identify behavioral changes that need docs updates
+  - The Known Limitations section is particularly important to review after hardening — items get fixed but the docs don't automatically update
+  - When adding error handling, document it in both the feature section (MCP Server) and remove it from the limitations section
+---
