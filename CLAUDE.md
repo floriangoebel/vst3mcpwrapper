@@ -41,8 +41,9 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `source/processor.h/cpp` | Audio processor — dynamic hosted component loading, audio/MIDI passthrough, wrapper state format, parameter injection |
 | `source/controller.h/cpp` | Edit controller — IComponentHandler, dynamic plugin loading, IConnectionPoint, MCP server, view management |
 | `source/hostedplugin.h/cpp` | Shared singleton — module/factory, load/unload, param change queue, hosted component sharing, UTF-16 helper |
-| `source/wrapperview.h` | WrapperPlugView — IPlugView drop zone interface |
-| `source/wrapperview.mm` | Drop zone NSView — Objective-C++ drag-and-drop implementation |
+| `source/wrapperview.h` | WrapperPlugView — IPlugView drop zone interface (cross-platform header) |
+| `source/wrapperview.mm` | macOS WrapperPlugView — Drop zone NSView with Objective-C++ drag-and-drop |
+| `source/wrapperview_linux.cpp` | Linux WrapperPlugView — No-op stub, returns `kResultFalse` from `isPlatformTypeSupported` (headless/MCP-only) |
 | `source/pluginids.h` | FUID definitions for processor and controller |
 | `source/mcp_param_handlers.h` | Extracted MCP parameter tool handlers: `isValidParamId()`, `handleListParameters()`, `handleGetParameter()`, `handleSetParameter()` — testable inline functions used by controller's MCP server |
 | `source/mcp_plugin_handlers.h` | Extracted MCP plugin management tool handlers: `handleGetLoadedPlugin()`, `handleListAvailablePlugins()`, `buildLoadPluginResponse()`, `handleUnloadPluginNotLoaded()`, `handleUnloadPluginSuccess()`, `handleShuttingDown()`, `handleTimeout()` — testable inline functions used by controller's MCP server |
@@ -77,8 +78,11 @@ Point your DAW's VST3 scan path to `build/VST3/Debug/` to load the plugin direct
 
 ### CMake Quirks
 
-- `macmain.cpp` must be explicitly added to plugin sources behind `if(APPLE)` — not part of `sdk` library
-- `module_mac.mm` requires `-fobjc-arc` compile flag for VST3 plugin hosting on macOS
+- `OBJCXX` language is enabled conditionally via `enable_language(OBJCXX)` inside `if(APPLE)` — avoids issues on Linux where OBJCXX is unavailable
+- `macmain.cpp` / `linuxmain.cpp` must be explicitly added to plugin sources behind `if(APPLE)` / `else()` — not part of `sdk` library
+- `module_mac.mm` (macOS) / `module_linux.cpp` (Linux) provide platform-specific VST3 module loading — gated behind `if(APPLE)` / `else()`
+- `module_mac.mm`, `wrapperview.mm`, `dispatcher_mac.mm` require `-fobjc-arc` compile flag on macOS
+- `wrapperview.mm` (macOS) / `wrapperview_linux.cpp` (Linux) provide platform-specific view implementations
 - cpp-mcp library CMake target name is `mcp` (not `cpp_mcp`)
 - `SMTG_CREATE_PLUGIN_LINK OFF` — prevents symlink conflicts with existing VST3 folder
 - Custom `Info.plist.in` needed for correct `CFBundlePackageType` (`BNDL`) on macOS
@@ -164,6 +168,7 @@ See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi
 
 - **Single instance only** — singleton architecture, one MCP server on a fixed port
 - **No error handling** for MCP server port conflicts
+- **Linux is headless** — no GUI drop zone on Linux (WrapperPlugView is a no-op stub); MCP tools and audio passthrough work normally
 
 ## Conventions
 
@@ -171,7 +176,8 @@ See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi
 - All source code in `source/`, resources in `resource/`
 - Namespace: `VST3MCPWrapper`
 - Not distributable (`flags = 0` in factory) — processor and controller share state via singleton
-- No VSTGUI dependency — drop zone uses native NSView, hosted GUI is forwarded directly
+- No VSTGUI dependency — drop zone uses native NSView (macOS), no-op stub (Linux), hosted GUI forwarded directly
+- macOS-specific code (`#import <Cocoa/Cocoa.h>`, `os_log`, Obj-C++) lives in `.mm` files; gate `#include <os/log.h>` and `os_log` calls behind `#ifdef __APPLE__` in `.cpp` files
 - Prefer `IPtr<>` for VST3 COM pointers
 - Keep the build output in `build/`, never copy plugin binaries to system paths during development
 - Use `utf16ToUtf8()` from `hostedplugin.h` for VST3 string conversions

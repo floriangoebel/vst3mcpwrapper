@@ -17,6 +17,8 @@ DAW Session
 
 Currently limited to a single instance (singleton architecture, fixed MCP port 8771). Multi-instance support is planned for Phase 2.
 
+**Platform support:** macOS (full GUI with drop zone) and Linux (headless — MCP tools and audio passthrough work, but no GUI). Platform-specific code is isolated: `.mm` files for macOS, `_linux.cpp` files for Linux. The `MainThreadDispatcher` abstracts macOS GCD / Linux worker thread dispatch.
+
 ## Component Diagram
 
 ```

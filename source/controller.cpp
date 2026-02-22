@@ -18,7 +18,10 @@
 
 #include <chrono>
 #include <future>
+
+#ifdef __APPLE__
 #include <os/log.h>
+#endif
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -298,19 +301,31 @@ tresult PLUGIN_API Controller::notify(IMessage* message) {
 // --- Dynamic plugin loading ---
 
 std::string Controller::loadPlugin(const std::string& path) {
+#ifdef __APPLE__
     os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] loadPlugin: %{public}s", path.c_str());
+#else
+    fprintf(stderr, "[VST3MCPWrapper] loadPlugin: %s\n", path.c_str());
+#endif
 
     teardownHostedController();
 
     auto& pluginModule = HostedPluginModule::instance();
     std::string error;
     if (!pluginModule.load(path, error)) {
+#ifdef __APPLE__
         os_log_error(OS_LOG_DEFAULT, "[VST3MCPWrapper] Failed to load module: %{public}s", error.c_str());
+#else
+        fprintf(stderr, "[VST3MCPWrapper] ERROR: Failed to load module: %s\n", error.c_str());
+#endif
         return error;
     }
 
     if (!setupHostedController()) {
+#ifdef __APPLE__
         os_log_error(OS_LOG_DEFAULT, "[VST3MCPWrapper] Failed to set up hosted controller");
+#else
+        fprintf(stderr, "[VST3MCPWrapper] ERROR: Failed to set up hosted controller\n");
+#endif
         return "Failed to set up hosted controller";
     }
 
@@ -340,7 +355,11 @@ std::string Controller::loadPlugin(const std::string& path) {
 }
 
 void Controller::unloadPlugin() {
+#ifdef __APPLE__
     os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] unloadPlugin called");
+#else
+    fprintf(stderr, "[VST3MCPWrapper] unloadPlugin called\n");
+#endif
 
     teardownHostedController();
 
@@ -424,7 +443,11 @@ bool Controller::setupHostedController() {
                 component->terminate();
                 return false;
             }
+#ifdef __APPLE__
             os_log(OS_LOG_DEFAULT, "[VST3MCPWrapper] Single-component plugin detected");
+#else
+            fprintf(stderr, "[VST3MCPWrapper] Single-component plugin detected\n");
+#endif
             singleCtrl->setComponentHandler(this);
             {
                 std::lock_guard<std::mutex> lock(hostedControllerMutex_);

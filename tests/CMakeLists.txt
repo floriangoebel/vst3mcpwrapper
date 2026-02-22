@@ -43,6 +43,7 @@ if(APPLE)
     )
 else()
     target_sources(VST3MCPWrapper_Tests PRIVATE
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_linux.cpp
         ${CMAKE_SOURCE_DIR}/source/dispatcher_linux.cpp
     )
 endif()

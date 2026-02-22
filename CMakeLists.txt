@@ -2,8 +2,13 @@ cmake_minimum_required(VERSION 3.25)
 
 project(VST3MCPWrapper
     VERSION 0.1.0
-    LANGUAGES CXX OBJCXX
+    LANGUAGES CXX
 )
+
+# OBJCXX needed for .mm files on macOS only
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -54,14 +59,20 @@ smtg_add_vst3plugin(VST3MCPWrapper
     source/factory.cpp
 )
 
-# macmain.cpp provides bundleEntry/bundleExit exports required on macOS
+# Platform-specific module entry points
 if(APPLE)
+    # macmain.cpp provides bundleEntry/bundleExit exports required on macOS
     target_sources(VST3MCPWrapper PRIVATE
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/main/macmain.cpp
     )
+else()
+    # linuxmain.cpp provides ModuleEntry/ModuleExit exports required on Linux
+    target_sources(VST3MCPWrapper PRIVATE
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/main/linuxmain.cpp
+    )
 endif()
 
-# Add platform-specific module loading and dispatch
+# Add platform-specific module loading, view, and dispatch
 if(APPLE)
     target_sources(VST3MCPWrapper PRIVATE
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm
@@ -77,6 +88,8 @@ if(APPLE)
     target_link_libraries(VST3MCPWrapper PRIVATE "-framework Foundation" "-framework CoreFoundation" "-framework AppKit")
 else()
     target_sources(VST3MCPWrapper PRIVATE
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_linux.cpp
+        source/wrapperview_linux.cpp
         source/dispatcher_linux.cpp
     )
 endif()
