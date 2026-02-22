@@ -98,7 +98,7 @@
         "Build compiles without errors"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "VST3::Hosting::Module::getModulePaths() is implemented in module_linux.cpp from the SDK. It should enumerate .vst3 bundles from standard Linux paths. The test machine may not have any VST3 plugins installed — that's fine, the test verifies the scanning doesn't crash and returns a valid (possibly empty) vector. Check the SDK source to understand which paths are scanned."
     },
     {

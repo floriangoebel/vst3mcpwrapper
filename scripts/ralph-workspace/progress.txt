@@ -37,6 +37,7 @@
 - MCP `sse_client` constructor takes a URL string: `mcp::sse_client("http://127.0.0.1:8771")` — NOT `(host, port)` args
 - MCP tool handler return value goes into `tool_result["content"]` — return just the content array (e.g., `json::array({{{"type","text"},{"text","..."}}})`), NOT the full `{content, isError}` envelope
 - MCP server `start(false)` = non-blocking (returns immediately), `start(true)` = blocking (run in a thread). Use `start(false)` for tests
+- Linux VST3 scan paths (SDK module_linux.cpp): $HOME/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/, /proc/self/exe/../vst3/
 - Gate `#include <os/log.h>` and `os_log` calls behind `#ifdef __APPLE__`; use `fprintf(stderr, ...)` on Linux
 - On Linux, add `module_linux.cpp` + `linuxmain.cpp` from VST3 SDK in `else()` CMake branches
 
@@ -125,4 +126,20 @@ Started: new PRD — Linux Platform Support
   - `server->start(false)` is non-blocking (ideal for tests), `start(true)` blocks forever (use in a thread for production)
   - Server stop with an active sse_client connection takes ~10s due to SSE connection timeout — the `ServerStopsCleanly` test (no active clients) completes in ~0.4s
   - Port 18771 used for tests to avoid conflicts with the real plugin server on 8771
+---
+
+## 2026-02-22 - US-006
+- Added `tests/test_plugin_scanning.cpp` with 6 Google Test cases for VST3 plugin scanning on Linux
+- Tests cover: getModulePaths() no-crash, all returned paths have .vst3 extension, dummy bundle discovery in ~/.vst3/, handleListAvailablePlugins() empty list, handleListAvailablePlugins() with paths, handleListAvailablePlugins() with live scan
+- Verified SDK module_linux.cpp scans 4 directories: $HOME/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/, /proc/self/exe/../vst3/
+- Dummy bundle test creates/cleans up a temporary .vst3 directory in ~/.vst3/ to verify discovery
+- Files changed:
+  - `tests/test_plugin_scanning.cpp` — New test file (6 tests)
+  - `tests/CMakeLists.txt` — Added test_plugin_scanning.cpp to test target sources
+- All 141 tests pass (135 existing + 6 new plugin scanning tests)
+- **Learnings for future iterations:**
+  - Linux SDK scans 4 directories for .vst3 bundles: $HOME/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/, and application-relative (/proc/self/exe/../vst3/)
+  - getModulePaths() gracefully handles missing directories (exceptions caught and silently ignored)
+  - GCC requires explicit `#include <fstream>` for `std::ofstream` — it's incomplete type via `<iosfwd>` from gtest headers
+  - handleListAvailablePlugins() returns `{content: [{type: "text", text: "<JSON array of paths>"}]}` — the text field is a stringified JSON array
 ---
