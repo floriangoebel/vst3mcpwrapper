@@ -45,7 +45,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "In processor.cpp notify(), std::string(static_cast<const char*>(data), size) is UB if data is nullptr. The VST3 SDK should guarantee this doesn't happen, but defense-in-depth is warranted. The mock in tests/mocks/mock_vst3.h may need to be extended to support returning nullptr from getBinary."
     },
     {
@@ -60,7 +60,7 @@
         "Total test count may decrease (placeholder removed) but remaining tests are meaningful"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "test_placeholder.cpp tests 1+1=2 — this was a scaffolding test from initial setup and has no value. test_mock_vst3.cpp only tests instantiation — these mocks are used by other tests, so the mock test file may be worth keeping if it verifies the mocks themselves behave correctly (especially queryInterface routing)."
     },
     {

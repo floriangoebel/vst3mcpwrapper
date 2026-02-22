@@ -10,7 +10,6 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 add_executable(VST3MCPWrapper_Tests
-    test_placeholder.cpp
     test_utf16_conversion.cpp
     test_stateformat.cpp
     test_param_queue.cpp

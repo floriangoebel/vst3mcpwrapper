@@ -4,42 +4,35 @@
 using namespace VST3MCPWrapper::Testing;
 using namespace Steinberg;
 
-TEST (MockVST3, MockComponentCanBeInstantiated)
+// Bogus IID that no mock supports
+static const Steinberg::TUID kBogusIid = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+
+// --- Ref counting ---
+
+TEST (MockVST3, RefCountStartsAtOne)
 {
-    MockComponent mock;
-    EXPECT_NE (nullptr, &mock);
+    MockComponent comp;
+    EXPECT_EQ (2u, comp.addRef ());    // 1 -> 2
+    EXPECT_EQ (1u, comp.release ());   // 2 -> 1
+
+    MockAudioProcessor proc;
+    EXPECT_EQ (2u, proc.addRef ());
+    EXPECT_EQ (1u, proc.release ());
+
+    MockEditController ctrl;
+    EXPECT_EQ (2u, ctrl.addRef ());
+    EXPECT_EQ (1u, ctrl.release ());
+
+    MockMessage msg;
+    EXPECT_EQ (2u, msg.addRef ());
+    EXPECT_EQ (1u, msg.release ());
+
+    MockAttributeList attrs;
+    EXPECT_EQ (2u, attrs.addRef ());
+    EXPECT_EQ (1u, attrs.release ());
 }
 
-TEST (MockVST3, MockAudioProcessorCanBeInstantiated)
-{
-    MockAudioProcessor mock;
-    EXPECT_NE (nullptr, &mock);
-}
-
-TEST (MockVST3, MockEditControllerCanBeInstantiated)
-{
-    MockEditController mock;
-    EXPECT_NE (nullptr, &mock);
-}
-
-TEST (MockVST3, MockMessageCanBeInstantiated)
-{
-    MockMessage mock;
-    EXPECT_NE (nullptr, &mock);
-}
-
-TEST (MockVST3, MockAttributeListCanBeInstantiated)
-{
-    MockAttributeList mock;
-    EXPECT_NE (nullptr, &mock);
-}
-
-TEST (MockVST3, MockComponentRefCounting)
-{
-    MockComponent mock;
-    EXPECT_EQ (2u, mock.addRef ());
-    EXPECT_EQ (1u, mock.release ());
-}
+// --- MockComponent queryInterface ---
 
 TEST (MockVST3, MockComponentQueryInterface)
 {
@@ -51,16 +44,42 @@ TEST (MockVST3, MockComponentQueryInterface)
     mock.release (); // balance the addRef from queryInterface
 
     obj = nullptr;
+    EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::IPluginBase::iid, &obj));
+    EXPECT_NE (nullptr, obj);
+    mock.release ();
+
+    obj = nullptr;
     EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::FUnknown::iid, &obj));
     EXPECT_NE (nullptr, obj);
     mock.release ();
 
-    // Unknown interface should fail
-    Steinberg::TUID bogusIid = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
     obj = nullptr;
-    EXPECT_EQ (kNoInterface, mock.queryInterface (bogusIid, &obj));
+    EXPECT_EQ (kNoInterface, mock.queryInterface (kBogusIid, &obj));
     EXPECT_EQ (nullptr, obj);
 }
+
+// --- MockAudioProcessor queryInterface ---
+
+TEST (MockVST3, MockAudioProcessorQueryInterface)
+{
+    MockAudioProcessor mock;
+
+    void* obj = nullptr;
+    EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::Vst::IAudioProcessor::iid, &obj));
+    EXPECT_NE (nullptr, obj);
+    mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::FUnknown::iid, &obj));
+    EXPECT_NE (nullptr, obj);
+    mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kNoInterface, mock.queryInterface (kBogusIid, &obj));
+    EXPECT_EQ (nullptr, obj);
+}
+
+// --- MockEditController queryInterface ---
 
 TEST (MockVST3, MockEditControllerQueryInterface)
 {
@@ -75,7 +94,18 @@ TEST (MockVST3, MockEditControllerQueryInterface)
     EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::IPluginBase::iid, &obj));
     EXPECT_NE (nullptr, obj);
     mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::FUnknown::iid, &obj));
+    EXPECT_NE (nullptr, obj);
+    mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kNoInterface, mock.queryInterface (kBogusIid, &obj));
+    EXPECT_EQ (nullptr, obj);
 }
+
+// --- MockMessage queryInterface ---
 
 TEST (MockVST3, MockMessageQueryInterface)
 {
@@ -85,7 +115,18 @@ TEST (MockVST3, MockMessageQueryInterface)
     EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::Vst::IMessage::iid, &obj));
     EXPECT_NE (nullptr, obj);
     mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::FUnknown::iid, &obj));
+    EXPECT_NE (nullptr, obj);
+    mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kNoInterface, mock.queryInterface (kBogusIid, &obj));
+    EXPECT_EQ (nullptr, obj);
 }
+
+// --- MockAttributeList queryInterface ---
 
 TEST (MockVST3, MockAttributeListQueryInterface)
 {
@@ -95,4 +136,13 @@ TEST (MockVST3, MockAttributeListQueryInterface)
     EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::Vst::IAttributeList::iid, &obj));
     EXPECT_NE (nullptr, obj);
     mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kResultOk, mock.queryInterface (Steinberg::FUnknown::iid, &obj));
+    EXPECT_NE (nullptr, obj);
+    mock.release ();
+
+    obj = nullptr;
+    EXPECT_EQ (kNoInterface, mock.queryInterface (kBogusIid, &obj));
+    EXPECT_EQ (nullptr, obj);
 }

@@ -77,3 +77,27 @@ Started: new PRD — Codebase Hardening
   - The port binding happens inside `start(true)` (httplib::Server::listen), not in the `mcp::server` constructor — both locations need error handling
   - Integration tests using `mcp::sse_client` take ~10s each due to SSE connection overhead — keep the number of integration tests reasonable
 ---
+
+## 2026-02-22 - US-003
+- Added null guard for `data` pointer after `getBinary()` returns `kResultOk` in `Processor::notify()` — if `data` is nullptr, logs warning to stderr and returns early
+- Added `#include <cstdio>` to `processor.cpp` for `fprintf`
+- Added unit test `LoadPluginMessageNullDataPointerNoCrash`: mocks `getBinary` returning `kResultOk` with `data=nullptr` and `size=10`, verifies no crash and no loading occurs
+- Files changed: `source/processor.cpp`, `tests/test_message_routing.cpp`
+- **Learnings for future iterations:**
+  - `std::string(nullptr, N)` is undefined behavior — always null-check pointers from SDK APIs even when the return code is `kResultOk`
+  - MockAttributeList's `getBinary` uses `SetArgReferee<1>(nullData)` to set the output pointer to nullptr in tests — no mock extension needed, GMock handles it natively
+  - The null guard pattern: check `!data` after `kResultOk && size > 0`, log with `fprintf(stderr, ...)`, return early
+---
+
+## 2026-02-22 - US-004
+- Removed `test_placeholder.cpp` (trivial `1+1=2` test) from `tests/` and `tests/CMakeLists.txt`
+- Rewrote `test_mock_vst3.cpp`: removed 5 trivial instantiation-only tests, added comprehensive queryInterface and ref counting tests for all 5 mock types
+- Added: `RefCountStartsAtOne` test verifying all mocks start at refCount=1
+- Added: `MockAudioProcessorQueryInterface` test (was missing)
+- Added: FUnknown::iid queryInterface coverage and unsupported IID (kNoInterface) tests for all mock types
+- Files changed: `tests/test_placeholder.cpp` (deleted), `tests/test_mock_vst3.cpp`, `tests/CMakeLists.txt`
+- **Learnings for future iterations:**
+  - The mock_vst3.h mocks all start refCount at 1 in their constructor — tests can verify this via `addRef()` returning 2
+  - MockAudioProcessor supports `IAudioProcessor::iid` and `FUnknown::iid` — not `IPluginBase::iid` (since IAudioProcessor doesn't extend IPluginBase)
+  - When removing test files, only need to delete the file and remove it from the `add_executable()` in `tests/CMakeLists.txt` — gtest_discover_tests handles the rest
+---
