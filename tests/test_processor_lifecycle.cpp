@@ -324,3 +324,29 @@ TEST_F (ProcessorLifecycleTest, SetBusArrangementsForwardsToHostedProcessor)
 
     ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
 }
+
+//------------------------------------------------------------------------
+// setBusArrangements rejects null inputs with positive count
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsRejectsNullInputs)
+{
+    SpeakerArrangement outputs[] = {SpeakerArr::kStereo};
+    EXPECT_EQ (processor_->setBusArrangements (nullptr, 1, outputs, 1), kInvalidArgument);
+}
+
+//------------------------------------------------------------------------
+// setBusArrangements rejects null outputs with positive count
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsRejectsNullOutputs)
+{
+    SpeakerArrangement inputs[] = {SpeakerArr::kStereo};
+    EXPECT_EQ (processor_->setBusArrangements (inputs, 1, nullptr, 1), kInvalidArgument);
+}
+
+//------------------------------------------------------------------------
+// setBusArrangements accepts null pointers with zero counts (reset case)
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsAcceptsNullWithZeroCounts)
+{
+    EXPECT_NE (processor_->setBusArrangements (nullptr, 0, nullptr, 0), kInvalidArgument);
+}

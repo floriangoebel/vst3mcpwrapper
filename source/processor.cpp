@@ -159,6 +159,9 @@ tresult PLUGIN_API Processor::setBusArrangements(
     SpeakerArrangement* inputs, int32 numIns,
     SpeakerArrangement* outputs, int32 numOuts)
 {
+    if ((!inputs && numIns > 0) || (!outputs && numOuts > 0))
+        return kInvalidArgument;
+
     // Store for replay when loading a hosted plugin mid-session
     storedInputArr_.assign(inputs, inputs + numIns);
     storedOutputArr_.assign(outputs, outputs + numOuts);
