@@ -77,7 +77,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "The merging logic is in processor.cpp process() around lines 194-237. It copies DAW changes first, then appends queued MCP changes. The existing test ParamChangesInjectedIntoProcessData only tests MCP-only injection. The mock hosted processor's process lambda should capture and verify the merged ParameterChanges content. Use ParameterChanges/ParameterValueQueue from sdk_hosting for test setup."
     },
     {

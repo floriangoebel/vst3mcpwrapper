@@ -477,3 +477,343 @@ TEST_F (ProcessorProcessTest, OriginalInputParamChangesRestoredAfterProcess)
     ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
     ProcessorTestAccess::setProcessorReady (*processor_, false);
 }
+
+//------------------------------------------------------------------------
+// DAW automation + MCP changes for DIFFERENT parameters: both appear in merged
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, MergesDawAndMcpChangesForDifferentParams)
+{
+    const int numSamples = 64;
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, numSamples, false);
+    TestAudioBuffers output (numChannels, numSamples, false);
+
+    // Push MCP parameter change (param 42)
+    auto& pluginModule = HostedPluginModule::instance ();
+    pluginModule.pushParamChange (42, 0.75);
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, true);
+    ProcessorTestAccess::setHostedActive (*processor_, true);
+
+    bool verified = false;
+    EXPECT_CALL (mockProc, process (::testing::_))
+        .WillOnce ([&verified] (ProcessData& d) -> tresult {
+            auto* changes = d.inputParameterChanges;
+            EXPECT_NE (changes, nullptr);
+            if (!changes)
+                return kResultOk;
+
+            // Should have 2 parameters: DAW param 100, MCP param 42
+            EXPECT_EQ (changes->getParameterCount (), 2);
+
+            // First: DAW automation (param 100, value 0.33 at offset 10)
+            auto* q0 = changes->getParameterData (0);
+            EXPECT_NE (q0, nullptr);
+            if (q0) {
+                EXPECT_EQ (q0->getParameterId (), 100u);
+                EXPECT_EQ (q0->getPointCount (), 1);
+                int32 sampleOffset;
+                ParamValue value;
+                EXPECT_EQ (q0->getPoint (0, sampleOffset, value), kResultOk);
+                EXPECT_EQ (sampleOffset, 10);
+                EXPECT_DOUBLE_EQ (value, 0.33);
+            }
+
+            // Second: MCP change (param 42, value 0.75 at offset 0)
+            auto* q1 = changes->getParameterData (1);
+            EXPECT_NE (q1, nullptr);
+            if (q1) {
+                EXPECT_EQ (q1->getParameterId (), 42u);
+                EXPECT_EQ (q1->getPointCount (), 1);
+                int32 sampleOffset;
+                ParamValue value;
+                EXPECT_EQ (q1->getPoint (0, sampleOffset, value), kResultOk);
+                EXPECT_EQ (sampleOffset, 0);
+                EXPECT_DOUBLE_EQ (value, 0.75);
+            }
+
+            verified = true;
+            return kResultOk;
+        });
+
+    // Set up DAW automation: param 100, value 0.33 at sample offset 10
+    ParameterChanges dawChanges;
+    int32 idx;
+    auto* dawQueue = dawChanges.addParameterData (100, idx);
+    int32 pIdx;
+    dawQueue->addPoint (10, 0.33, pIdx);
+
+    ProcessData data{};
+    data.numSamples = numSamples;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+    data.inputParameterChanges = &dawChanges;
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultOk);
+    EXPECT_TRUE (verified) << "Mock process() was not called with merged changes";
+
+    // Original pointer must be restored
+    EXPECT_EQ (data.inputParameterChanges, &dawChanges);
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);
+}
+
+//------------------------------------------------------------------------
+// DAW automation + MCP changes for the SAME parameter: both present (MCP appended)
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, MergesDawAndMcpChangesForSameParam)
+{
+    const int numSamples = 64;
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, numSamples, false);
+    TestAudioBuffers output (numChannels, numSamples, false);
+
+    // Push MCP change for param 50
+    auto& pluginModule = HostedPluginModule::instance ();
+    pluginModule.pushParamChange (50, 0.90);
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, true);
+    ProcessorTestAccess::setHostedActive (*processor_, true);
+
+    bool verified = false;
+    EXPECT_CALL (mockProc, process (::testing::_))
+        .WillOnce ([&verified] (ProcessData& d) -> tresult {
+            auto* changes = d.inputParameterChanges;
+            EXPECT_NE (changes, nullptr);
+            if (!changes)
+                return kResultOk;
+
+            // addParameterData merges into the same queue for the same param ID,
+            // so there should be 1 parameter with 2 points.
+            // ParameterValueQueue::addPoint sorts by sampleOffset, so MCP (offset 0)
+            // comes before DAW (offset 5).
+            EXPECT_EQ (changes->getParameterCount (), 1);
+
+            auto* q0 = changes->getParameterData (0);
+            EXPECT_NE (q0, nullptr);
+            if (q0) {
+                EXPECT_EQ (q0->getParameterId (), 50u);
+                EXPECT_EQ (q0->getPointCount (), 2);
+
+                // First point: MCP change (offset 0, value 0.90) — sorted first
+                int32 sampleOffset;
+                ParamValue value;
+                EXPECT_EQ (q0->getPoint (0, sampleOffset, value), kResultOk);
+                EXPECT_EQ (sampleOffset, 0);
+                EXPECT_DOUBLE_EQ (value, 0.90);
+
+                // Second point: DAW automation (offset 5, value 0.20)
+                EXPECT_EQ (q0->getPoint (1, sampleOffset, value), kResultOk);
+                EXPECT_EQ (sampleOffset, 5);
+                EXPECT_DOUBLE_EQ (value, 0.20);
+            }
+
+            verified = true;
+            return kResultOk;
+        });
+
+    // Set up DAW automation: same param 50, value 0.20 at offset 5
+    ParameterChanges dawChanges;
+    int32 idx;
+    auto* dawQueue = dawChanges.addParameterData (50, idx);
+    int32 pIdx;
+    dawQueue->addPoint (5, 0.20, pIdx);
+
+    ProcessData data{};
+    data.numSamples = numSamples;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+    data.inputParameterChanges = &dawChanges;
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultOk);
+    EXPECT_TRUE (verified) << "Mock process() was not called with merged changes";
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);
+}
+
+//------------------------------------------------------------------------
+// Only DAW automation changes (empty MCP queue): hosted processor sees DAW changes
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, OnlyDawChangesForwardedWhenMcpQueueEmpty)
+{
+    const int numSamples = 64;
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, numSamples, false);
+    TestAudioBuffers output (numChannels, numSamples, false);
+
+    // No MCP changes — queue is empty
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, true);
+    ProcessorTestAccess::setHostedActive (*processor_, true);
+
+    // Set up DAW automation: 2 params
+    ParameterChanges dawChanges;
+    int32 idx, pIdx;
+    auto* q0 = dawChanges.addParameterData (200, idx);
+    q0->addPoint (0, 0.60, pIdx);
+    auto* q1 = dawChanges.addParameterData (201, idx);
+    q1->addPoint (32, 0.40, pIdx);
+
+    bool verified = false;
+    EXPECT_CALL (mockProc, process (::testing::_))
+        .WillOnce ([&dawChanges, &verified] (ProcessData& d) -> tresult {
+            // With empty MCP queue, process takes the direct path —
+            // the hosted processor receives the original DAW inputParameterChanges
+            EXPECT_EQ (d.inputParameterChanges, &dawChanges);
+
+            auto* changes = d.inputParameterChanges;
+            EXPECT_NE (changes, nullptr);
+            if (changes) {
+                EXPECT_EQ (changes->getParameterCount (), 2);
+
+                auto* p0 = changes->getParameterData (0);
+                if (p0) {
+                    EXPECT_EQ (p0->getParameterId (), 200u);
+                    int32 offset;
+                    ParamValue val;
+                    EXPECT_EQ (p0->getPoint (0, offset, val), kResultOk);
+                    EXPECT_DOUBLE_EQ (val, 0.60);
+                }
+
+                auto* p1 = changes->getParameterData (1);
+                if (p1) {
+                    EXPECT_EQ (p1->getParameterId (), 201u);
+                    int32 offset;
+                    ParamValue val;
+                    EXPECT_EQ (p1->getPoint (0, offset, val), kResultOk);
+                    EXPECT_DOUBLE_EQ (val, 0.40);
+                }
+            }
+
+            verified = true;
+            return kResultOk;
+        });
+
+    ProcessData data{};
+    data.numSamples = numSamples;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+    data.inputParameterChanges = &dawChanges;
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultOk);
+    EXPECT_TRUE (verified) << "Mock process() was not called";
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);
+}
+
+//------------------------------------------------------------------------
+// Only MCP changes (null DAW inputParameterChanges): hosted sees only MCP changes
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, OnlyMcpChangesWhenDawInputParamChangesNull)
+{
+    const int numSamples = 64;
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, numSamples, false);
+    TestAudioBuffers output (numChannels, numSamples, false);
+
+    // Push MCP changes
+    auto& pluginModule = HostedPluginModule::instance ();
+    pluginModule.pushParamChange (10, 0.55);
+    pluginModule.pushParamChange (20, 0.15);
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, true);
+    ProcessorTestAccess::setHostedActive (*processor_, true);
+
+    bool verified = false;
+    EXPECT_CALL (mockProc, process (::testing::_))
+        .WillOnce ([&verified] (ProcessData& d) -> tresult {
+            auto* changes = d.inputParameterChanges;
+            EXPECT_NE (changes, nullptr);
+            if (!changes)
+                return kResultOk;
+
+            EXPECT_EQ (changes->getParameterCount (), 2);
+
+            auto* q0 = changes->getParameterData (0);
+            EXPECT_NE (q0, nullptr);
+            if (q0) {
+                EXPECT_EQ (q0->getParameterId (), 10u);
+                EXPECT_EQ (q0->getPointCount (), 1);
+                int32 sampleOffset;
+                ParamValue value;
+                EXPECT_EQ (q0->getPoint (0, sampleOffset, value), kResultOk);
+                EXPECT_DOUBLE_EQ (value, 0.55);
+            }
+
+            auto* q1 = changes->getParameterData (1);
+            EXPECT_NE (q1, nullptr);
+            if (q1) {
+                EXPECT_EQ (q1->getParameterId (), 20u);
+                EXPECT_EQ (q1->getPointCount (), 1);
+                int32 sampleOffset;
+                ParamValue value;
+                EXPECT_EQ (q1->getPoint (0, sampleOffset, value), kResultOk);
+                EXPECT_DOUBLE_EQ (value, 0.15);
+            }
+
+            verified = true;
+            return kResultOk;
+        });
+
+    ProcessData data{};
+    data.numSamples = numSamples;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+    data.inputParameterChanges = nullptr;  // No DAW changes
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultOk);
+    EXPECT_TRUE (verified) << "Mock process() was not called with MCP-only changes";
+
+    // Original null pointer must be restored
+    EXPECT_EQ (data.inputParameterChanges, nullptr);
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);
+}

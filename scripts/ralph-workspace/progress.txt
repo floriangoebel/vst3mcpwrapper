@@ -29,6 +29,7 @@
 - Stack-allocated mocks with IPtr: always clear the IPtr before the mock goes out of scope to avoid use-after-destroy
 - Processor can be instantiated with `new Processor()` + `initialize(nullptr)` for testing; call `terminate()` + `release()` in TearDown
 - `ParameterChanges` from sdk_hosting is a stack-local in process() — verify parameter data inside mock's process lambda, never after the call returns (use-after-free)
+- `ParameterValueQueue::addPoint` inserts sorted by `sampleOffset` — not in append order. `ParameterChanges::addParameterData` returns existing queue for duplicate param IDs
 - `ProcessorTestAccess` can be extended per test file with extra accessors (setProcessorReady, setHostedActive, etc.)
 - Platform-specific code pattern: header with templates + `postImpl()` declaration, .mm/.cpp files for platform implementations. Use `if(APPLE)...else()` in CMake for platform source files
 - `MainThreadDispatcher` owns the alive flag and dispatch logic — MCP handlers use `dispatcher.dispatch<R>(func, shutdownValue)` instead of raw dispatch_async + promise/future
@@ -100,4 +101,19 @@ Started: new PRD — Codebase Hardening
   - The mock_vst3.h mocks all start refCount at 1 in their constructor — tests can verify this via `addRef()` returning 2
   - MockAudioProcessor supports `IAudioProcessor::iid` and `FUnknown::iid` — not `IPluginBase::iid` (since IAudioProcessor doesn't extend IPluginBase)
   - When removing test files, only need to delete the file and remove it from the `add_executable()` in `tests/CMakeLists.txt` — gtest_discover_tests handles the rest
+---
+
+## 2026-02-22 - US-005
+- Added 4 new tests to `test_processor_process.cpp` verifying DAW automation + MCP parameter change merging:
+  - `MergesDawAndMcpChangesForDifferentParams`: DAW param 100 + MCP param 42 → both appear in merged ParameterChanges
+  - `MergesDawAndMcpChangesForSameParam`: DAW param 50 + MCP param 50 → single queue with 2 points (sorted by sampleOffset)
+  - `OnlyDawChangesForwardedWhenMcpQueueEmpty`: Empty MCP queue → hosted processor receives original DAW inputParameterChanges directly (no merge path)
+  - `OnlyMcpChangesWhenDawInputParamChangesNull`: Null DAW inputParameterChanges + MCP changes → hosted processor sees only MCP changes, null pointer restored after
+- Existing tests (`ParamChangesInjectedIntoProcessData`, `OriginalInputParamChangesRestoredAfterProcess`) still pass alongside new tests
+- Files changed: `tests/test_processor_process.cpp`
+- **Learnings for future iterations:**
+  - `ParameterValueQueue::addPoint` inserts points sorted by `sampleOffset`, NOT in append order — when DAW has offset=5 and MCP has offset=0, the MCP point appears first in the queue
+  - `ParameterChanges::addParameterData` returns the existing queue if the param ID already exists (lines 176-182 in SDK source) — same-param changes from DAW and MCP merge into one queue
+  - When MCP queue is empty (`drainBuffer_.empty()`), process() takes the direct path (line 240) and forwards the original ProcessData without creating merged ParameterChanges — test this by verifying `d.inputParameterChanges == &dawChanges` pointer identity
+  - Always verify parameter data inside the mock process lambda — `ParameterChanges` is stack-local in process() and destroyed after return
 ---

@@ -43,6 +43,7 @@ public:
 private:
     bool loadHostedPlugin(const std::string& path);
     void unloadHostedPlugin();
+    void replayDawStateOntoHosted();
 
     Steinberg::IPtr<Steinberg::Vst::IComponent> hostedComponent_;
     Steinberg::IPtr<Steinberg::Vst::IAudioProcessor> hostedProcessor_;
