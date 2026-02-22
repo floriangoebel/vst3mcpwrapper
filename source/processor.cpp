@@ -309,6 +309,19 @@ tresult PLUGIN_API Processor::setState(IBStream* state) {
     if (!pluginPath.empty() && pluginPath != currentPluginPath_) {
         unloadHostedPlugin();
         loadHostedPlugin(pluginPath);
+
+        // Replay activation and processing state — setState() can be called
+        // while the wrapper is already active (e.g., preset recall, undo).
+        // Without this, the hosted plugin is loaded but never activated,
+        // causing audio to silently fall through to passthrough.
+        if (wrapperActive_ && hostedComponent_) {
+            hostedComponent_->setActive(true);
+            hostedActive_ = true;
+        }
+        if (wrapperProcessing_ && hostedProcessor_) {
+            hostedProcessor_->setProcessing(true);
+            hostedProcessing_ = true;
+        }
     }
 
     // Forward remaining state to hosted component

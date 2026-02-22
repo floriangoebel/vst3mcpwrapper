@@ -133,7 +133,11 @@ std::vector<SpeakerArrangement> storedInputArr_;  // from setBusArrangements()
 std::vector<SpeakerArrangement> storedOutputArr_; // from setBusArrangements()
 bool wrapperActive_;                              // from setActive()
 bool wrapperProcessing_;                          // from setProcessing()
+std::atomic<bool> hostedActive_;                  // written on main/msg thread, read on audio thread
+std::atomic<bool> hostedProcessing_;              // written on main/msg thread, read on audio thread
 ```
+
+Activation/processing state (`wrapperActive_`, `wrapperProcessing_`) is replayed onto the hosted component in both loading paths: `notify("LoadPlugin")` (runtime loading via MCP/drag-and-drop) and `setState()` (preset recall, undo, session restore while active). `hostedActive_` and `hostedProcessing_` are atomic because they are written on the main/message thread and read on the audio thread in `process()`.
 
 ### Loading Sequence
 
@@ -149,7 +153,7 @@ When a hosted plugin is loaded (via MCP, drag-and-drop, or session restore):
 4.  controller->setComponentHandler(this)
 ```
 
-**Processor side** (`loadHostedPlugin`, triggered by "LoadPlugin" message):
+**Processor side** (`loadHostedPlugin`, triggered by "LoadPlugin" message or `setState`):
 ```
 1.  Module::create(path)               — load the .vst3 bundle
 2.  factory.createInstance<IComponent>  — create the component
@@ -158,10 +162,12 @@ When a hosted plugin is loaded (via MCP, drag-and-drop, or session restore):
 5.  activateBus(bus 0 only, deactivate extras) — match wrapper's 1-in/1-out layout
 6.  setBusArrangements(stored)          — replay DAW's bus config
 7.  setupProcessing(currentSetup_)      — replay sample rate, block size
-8.  setActive(true)  [if wrapper is active]
-9.  setProcessing(true)  [if wrapper is processing]
-10. processorReady_ = true              — audio thread starts forwarding
+8.  processorReady_ = true              — audio thread starts forwarding
+9.  setActive(true)  [if wrapper is active]
+10. setProcessing(true)  [if wrapper is processing]
 ```
+
+Steps 9-10 happen after `loadHostedPlugin()` returns, in both the `notify("LoadPlugin")` and `setState()` callers. The "PluginLoaded" acknowledgment from the processor triggers `connectHostedComponents()` and `syncComponentState()` on the controller side, establishing `IConnectionPoint` messaging between the hosted component and controller.
 
 ### Single-Component Plugins
 

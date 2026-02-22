@@ -486,7 +486,11 @@ tresult PLUGIN_API Controller::notify(IMessage* message) {
         return kResultFalse;
 
     if (strcmp(message->getMessageID(), "PluginLoaded") == 0) {
-        // Processor has finished loading the plugin — acknowledgment received
+        // Processor has finished loading — the hosted component is now available
+        // in the singleton. Connect IConnectionPoint and sync state so plugins
+        // that rely on component↔controller messaging work correctly.
+        connectHostedComponents();
+        syncComponentState();
         return kResultOk;
     }
 

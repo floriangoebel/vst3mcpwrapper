@@ -30,6 +30,10 @@ FetchContent_Declare(cpp_mcp
     GIT_REPOSITORY https://github.com/hkr04/cpp-mcp.git
     GIT_TAG main
     GIT_SHALLOW TRUE
+    PATCH_COMMAND ${CMAKE_COMMAND} -DFILE=${FETCHCONTENT_BASE_DIR}/cpp_mcp-src/include/mcp_message.h
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_mcp_version.cmake
+        && ${CMAKE_COMMAND} -DFILE=${FETCHCONTENT_BASE_DIR}/cpp_mcp-src/src/mcp_server.cpp
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_mcp_server.cmake
 )
 
 FetchContent_MakeAvailable(cpp_mcp)
