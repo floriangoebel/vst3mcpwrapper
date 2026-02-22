@@ -159,7 +159,13 @@ struct Controller::MCPServer {
 
         // Start server in background thread
         serverThread = std::thread([this]() {
-            server->start(true);
+            try {
+                server->start(true);
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[VST3MCPWrapper] ERROR: MCP server thread error: %s\n", e.what());
+            } catch (...) {
+                fprintf(stderr, "[VST3MCPWrapper] ERROR: MCP server thread unknown error\n");
+            }
         });
     }
 
@@ -544,8 +550,16 @@ void Controller::syncComponentState() {
 }
 
 void Controller::startMCPServer() {
-    mcpServer_ = std::make_unique<MCPServer>();
-    mcpServer_->start(this);
+    try {
+        mcpServer_ = std::make_unique<MCPServer>();
+        mcpServer_->start(this);
+    } catch (const std::exception& e) {
+        fprintf(stderr, "[VST3MCPWrapper] ERROR: Failed to start MCP server: %s\n", e.what());
+        mcpServer_.reset();
+    } catch (...) {
+        fprintf(stderr, "[VST3MCPWrapper] ERROR: Failed to start MCP server (unknown error)\n");
+        mcpServer_.reset();
+    }
 }
 
 void Controller::stopMCPServer() {

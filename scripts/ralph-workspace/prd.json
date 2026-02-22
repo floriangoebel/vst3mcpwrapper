@@ -1,122 +1,134 @@
 {
   "project": "VST3MCPWrapper",
-  "branchName": "ralph/linux-platform-support",
-  "description": "Linux Platform Support - Build, test, validate, and harden the VST3 MCP Wrapper plugin on Linux (Ubuntu 24.04)",
+  "branchName": "ralph/hardening",
+  "description": "Codebase Hardening — Fix bugs, improve robustness, expand test coverage, and clean up dead code before public release",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Build plugin and test targets on Linux",
-      "description": "As a developer, I want the plugin and test suite to compile on Linux so that I can develop and validate on my Ubuntu system.",
+      "title": "Validate NaN/Inf in set_parameter MCP tool",
+      "description": "As a developer, I want the set_parameter tool to reject NaN and Infinity values so that invalid floats never reach the audio processor.",
       "acceptanceCriteria": [
-        "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON configures without errors on Linux",
-        "cmake --build build --target VST3MCPWrapper compiles without errors on Linux",
-        "cmake --build build --target VST3MCPWrapper_Tests compiles without errors on Linux",
-        "No compiler warnings in our source files (source/ and tests/). Warnings from third-party SDK code are acceptable.",
-        "Fix any Linux-specific compilation issues in source files, CMakeLists.txt, or tests/CMakeLists.txt"
+        "handleSetParameter() checks std::isfinite(value) before clamping",
+        "If value is NaN or Inf, return isError: true with a descriptive message",
+        "Add unit tests in test_mcp_param_tools.cpp: NaN returns error, +Inf returns error, -Inf returns error",
+        "Existing set_parameter tests still pass",
+        "Build compiles without errors, all tests pass"
       ],
       "priority": 1,
       "passes": true,
-      "notes": "The build was set up in US-015 of the previous PRD but was only verified on macOS. This is the first time building on the actual Linux target (Ubuntu 24.04, GCC, x86_64). Expect potential issues with: cpp-mcp PATCH_COMMAND (shell && chaining may not work identically), VST3 SDK Linux-specific headers, missing system dependencies. If cmake cache exists from a different platform, delete build/ and start fresh."
+      "notes": "std::clamp with NaN returns NaN (comparisons with NaN are always false). This NaN would propagate to setParamNormalized() and the audio processor. Add #include <cmath> if not already present for std::isfinite()."
     },
     {
       "id": "US-002",
-      "title": "Run test suite on Linux and fix all failures",
-      "description": "As a developer, I want all 118 existing tests to pass on Linux so that I have confidence the core logic is platform-independent.",
+      "title": "Add error handling for MCP server start failure",
+      "description": "As a developer, I want the MCP server start to be wrapped in a try-catch so that a port conflict doesn't crash the DAW.",
       "acceptanceCriteria": [
-        "ctest --test-dir build --output-on-failure runs all tests",
-        "All tests pass (zero failures)",
-        "Fix any platform-specific test failures (e.g., path separators, endianness, type size assumptions)",
-        "If a test is fundamentally macOS-only, gate it with a platform check and document why"
+        "Controller::startMCPServer() (or MCPServer::start()) wraps the server start in a try-catch",
+        "On failure, logs the error to stderr with fprintf and resets mcpServer_ to nullptr",
+        "The plugin continues to function (audio passthrough) even if the MCP server fails to start",
+        "Add a test in test_mcp_server_integration.cpp that verifies binding to an already-in-use port doesn't crash (start two servers on the same port, second should fail gracefully)",
+        "Build compiles without errors, all tests pass"
       ],
       "priority": 2,
       "passes": true,
-      "notes": "Tests were written and validated on macOS. Potential Linux issues: TChar handling (char16_t vs wchar_t), os_log references in test code, mock ref counting edge cases, ResizableMemoryIBStream behavior. The test target already has if(APPLE)/else() branches for module_linux.cpp and dispatcher_linux.cpp."
+      "notes": "Currently if mcp::server::start() throws (e.g., port 8771 already in use), the exception propagates uncaught. The MCP server is non-critical — audio passthrough should always work. Use fprintf(stderr, ...) for logging (not os_log, which is macOS-only)."
     },
     {
       "id": "US-003",
-      "title": "Validate and fix Linux VST3 bundle layout",
-      "description": "As a developer, I want the built .vst3 bundle to follow the correct Linux directory structure so that DAW hosts can scan and load it.",
+      "title": "Add null guard for message binary data in Processor::notify",
+      "description": "As a developer, I want explicit null pointer checks when extracting binary data from IMessage attributes so that a malformed message can't cause undefined behavior.",
       "acceptanceCriteria": [
-        "The built bundle follows the VST3 Linux specification: VST3MCPWrapper.vst3/Contents/x86_64-linux/VST3MCPWrapper.so",
-        "The .so file exists and is a valid ELF shared library (file command confirms)",
-        "If the CMake output structure is wrong, fix CMakeLists.txt to produce the correct layout",
-        "Add a post-build validation step (CMake add_custom_command or ctest test) that checks the bundle structure",
-        "Document the output path in CLAUDE.md if it differs from the macOS path"
+        "In Processor::notify(), after getBinary() returns kResultOk, check that data pointer is not nullptr before constructing std::string",
+        "If data is nullptr despite kResultOk, skip the operation (log warning to stderr)",
+        "Add a unit test in test_message_routing.cpp that sends a message with getBinary returning kResultOk but data=nullptr, verify no crash",
+        "Existing message routing tests still pass",
+        "Build compiles without errors, all tests pass"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "The VST3 SDK CMake macros (smtg_add_vst3plugin) should handle Linux bundle layout automatically, but this hasn't been verified. On macOS the output is build/VST3/Debug/VST3MCPWrapper.vst3 (a macOS bundle). On Linux it should be a directory tree. Standard Linux VST3 scan paths: ~/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/. The VST3 SDK's smtg_target_set_bundle is macOS-only (inside if(APPLE))."
+      "passes": false,
+      "notes": "In processor.cpp notify(), std::string(static_cast<const char*>(data), size) is UB if data is nullptr. The VST3 SDK should guarantee this doesn't happen, but defense-in-depth is warranted. The mock in tests/mocks/mock_vst3.h may need to be extended to support returning nullptr from getBinary."
     },
     {
       "id": "US-004",
-      "title": "Add Linux dispatcher unit tests",
-      "description": "As a developer, I want dedicated tests for the Linux worker-thread dispatcher so that I can verify the condition variable task queue works correctly.",
+      "title": "Remove placeholder test and verify test_mock_vst3 provides value",
+      "description": "As a developer, I want to remove the placeholder test and ensure mock tests are meaningful so that the test suite is clean and trustworthy.",
       "acceptanceCriteria": [
-        "Create tests/test_dispatcher_linux.cpp with Google Test",
-        "Test dispatch() posts a task and returns a future that resolves with the correct value",
-        "Test multiple sequential dispatches execute in order",
-        "Test concurrent dispatches from multiple threads all complete successfully",
-        "Test shutdown() causes isAlive() to return false",
-        "Test dispatch() after shutdown returns the default/shutdown value without hanging",
-        "Test destructor joins the worker thread cleanly (no thread leak)",
-        "All tests pass via ctest on Linux",
-        "Build compiles without errors"
+        "Remove test_placeholder.cpp entirely from tests/ and from tests/CMakeLists.txt",
+        "Review test_mock_vst3.cpp — if tests only check instantiation and trivial ref counting, either add meaningful queryInterface tests or remove the file",
+        "If test_mock_vst3.cpp is kept, add tests that verify: queryInterface returns correct interfaces, queryInterface for unsupported IID returns kNoInterface, ref counting starts at 1",
+        "Build compiles without errors, all tests pass",
+        "Total test count may decrease (placeholder removed) but remaining tests are meaningful"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "The Linux dispatcher (source/dispatcher_linux.cpp) uses a worker thread with std::condition_variable and std::queue<std::function<void()>>. The dispatch<R>() template is in dispatcher.h. These tests should exercise the Linux-specific implementation path. On macOS these tests can be skipped or adapted since the macOS dispatcher uses GCD instead."
+      "passes": false,
+      "notes": "test_placeholder.cpp tests 1+1=2 — this was a scaffolding test from initial setup and has no value. test_mock_vst3.cpp only tests instantiation — these mocks are used by other tests, so the mock test file may be worth keeping if it verifies the mocks themselves behave correctly (especially queryInterface routing)."
     },
     {
       "id": "US-005",
-      "title": "Add MCP server integration test",
-      "description": "As a developer, I want a test that starts the MCP server on Linux and verifies it responds to HTTP requests so that I know the full networking stack works.",
+      "title": "Test DAW automation + MCP parameter change merging",
+      "description": "As a developer, I want tests that verify the processor correctly merges DAW automation changes with MCP-queued parameter changes during process().",
       "acceptanceCriteria": [
-        "Create tests/test_mcp_server_integration.cpp with Google Test",
-        "Test starts an mcp::server on localhost with a known port (e.g., 18771 to avoid conflicts)",
-        "Test registers a simple tool and verifies it can be called via HTTP POST to /message",
-        "Test verifies the /sse endpoint accepts connections",
-        "Test stops the server cleanly without hanging or crashing",
-        "Test verifies the server port is released after stop (can rebind)",
-        "All tests pass via ctest on Linux",
-        "Build compiles without errors"
+        "Add tests in test_processor_process.cpp (or a new file if cleaner)",
+        "Test: When DAW provides inputParameterChanges AND the MCP queue has changes for different parameters, both appear in the merged ParameterChanges passed to the hosted processor",
+        "Test: When DAW and MCP queue have changes for the SAME parameter, both changes are present (MCP appended after DAW)",
+        "Test: When only DAW has changes (empty MCP queue), hosted processor sees only DAW changes",
+        "Test: When only MCP queue has changes (empty DAW inputParameterChanges), hosted processor sees only MCP changes",
+        "Test: After process() returns, the original inputParameterChanges pointer is restored on ProcessData (existing test, but verify it still works with the new tests)",
+        "Build compiles without errors, all tests pass"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "cpp-mcp uses httplib internally. This test doesn't need any VST3 dependencies — it just tests that the MCP server library works on Linux. Use httplib::Client (available from cpp-mcp includes) for making test requests. The server should start and stop within the test, no background process needed. Use a high port number to avoid permission issues and conflicts."
+      "passes": false,
+      "notes": "The merging logic is in processor.cpp process() around lines 194-237. It copies DAW changes first, then appends queued MCP changes. The existing test ParamChangesInjectedIntoProcessData only tests MCP-only injection. The mock hosted processor's process lambda should capture and verify the merged ParameterChanges content. Use ParameterChanges/ParameterValueQueue from sdk_hosting for test setup."
     },
     {
       "id": "US-006",
-      "title": "Verify plugin scanning returns Linux VST3 paths",
-      "description": "As a developer, I want to verify that list_available_plugins scans the correct Linux directories so that users can discover installed VST3 plugins.",
+      "title": "Test processor state replay during plugin load",
+      "description": "As a developer, I want tests that verify the processor correctly replays DAW state (active, processing, bus arrangements, process setup) onto a newly loaded hosted plugin.",
       "acceptanceCriteria": [
-        "Create tests/test_plugin_scanning.cpp with Google Test",
-        "Test calls VST3::Hosting::Module::getModulePaths() and verifies it returns without crashing",
-        "Test verifies the function scans standard Linux paths: ~/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/",
-        "If the SDK's module_linux.cpp doesn't scan expected paths, document the actual behavior",
-        "Test that the handleListAvailablePlugins() MCP handler correctly wraps the scan results",
-        "All tests pass via ctest on Linux",
-        "Build compiles without errors"
+        "Add tests in test_processor_lifecycle.cpp (or a new file if cleaner)",
+        "Test: When wrapperActive_=true and a plugin is loaded via notify('LoadPlugin'), the hosted component receives setActive(true)",
+        "Test: When wrapperProcessing_=true and a plugin is loaded, the hosted processor receives setProcessing(true)",
+        "Test: When both wrapperActive_ and wrapperProcessing_ are true, the hosted plugin receives both calls in the correct order (setActive before setProcessing)",
+        "Test: When wrapperActive_=false, the hosted component does NOT receive setActive(true) after loading",
+        "Test: Stored bus arrangements from setBusArrangements() are replayed onto the hosted processor during loading",
+        "Build compiles without errors, all tests pass"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "VST3::Hosting::Module::getModulePaths() is implemented in module_linux.cpp from the SDK. It should enumerate .vst3 bundles from standard Linux paths. The test machine may not have any VST3 plugins installed — that's fine, the test verifies the scanning doesn't crash and returns a valid (possibly empty) vector. Check the SDK source to understand which paths are scanned."
+      "passes": false,
+      "notes": "The replay logic is in processor.cpp after loadHostedPlugin() returns, in the notify('LoadPlugin') handler (around lines 339-356). Tests need to: 1) set wrapper state (call setActive/setProcessing on the wrapper), 2) trigger a load via notify(), 3) verify the mock hosted processor received the correct calls. The ProcessorTestAccess friend class may need new accessors."
     },
     {
       "id": "US-007",
-      "title": "Update documentation for Linux platform",
-      "description": "As a developer, I want CLAUDE.md and ARCHITECTURE.md to accurately reflect Linux support so that documentation stays in sync with the code.",
+      "title": "Test error paths in plugin loading",
+      "description": "As a developer, I want tests that verify graceful behavior when plugin loading fails at various stages so that failures don't crash the DAW.",
       "acceptanceCriteria": [
-        "CLAUDE.md Build section includes Linux-specific prerequisites (build-essential, cmake, etc.)",
-        "CLAUDE.md Build section documents the Linux output bundle path",
-        "CLAUDE.md Known Limitations section documents Linux headless mode (no GUI drop zone)",
-        "CLAUDE.md documents Linux VST3 scan paths and how to install the plugin for DAW scanning",
-        "ARCHITECTURE.md Platform Support section is updated with Linux runtime behavior",
-        "All documentation is accurate and internally consistent with the current codebase",
-        "No stale macOS-only descriptions that imply macOS is the only platform"
+        "Add tests in test_hostedplugin.cpp or a new test file",
+        "Test: Loading a nonexistent .vst3 path returns failure and leaves the module in a clean state",
+        "Test: After a failed load, a subsequent valid load still works (no stuck state)",
+        "Test: Unloading when nothing is loaded is a safe no-op",
+        "Test: Double-unload is a safe no-op",
+        "Test: Loading a new plugin while one is already loaded cleanly replaces it (the old one is unloaded first)",
+        "Build compiles without errors, all tests pass"
       ],
       "priority": 7,
       "passes": false,
-      "notes": "The convention is: documentation must stay in sync with code. Previous US-015 added some Linux notes but they were written from macOS without verifying on Linux. Now that we're actually on Linux, update docs with verified information. Include: Linux build prerequisites, build commands, output paths, DAW setup (symlink to ~/.vst3/), and known working DAWs on Linux (Bitwig, REAPER, Ardour)."
+      "notes": "These tests exercise HostedPluginModule::load() and unload() error paths. The module uses a real Module::create() call which will fail for nonexistent paths — that's the correct behavior to test (no mocking needed for this). Focus on verifying the singleton returns to a clean state after errors."
+    },
+    {
+      "id": "US-008",
+      "title": "Update documentation to reflect hardening changes",
+      "description": "As a developer, I want CLAUDE.md and ARCHITECTURE.md to accurately reflect any changes made during hardening so that documentation stays in sync.",
+      "acceptanceCriteria": [
+        "If any new source files were created, add them to the Source Files table in CLAUDE.md",
+        "If any test files were added/removed, verify the test count references are accurate or remove specific counts",
+        "If error handling behavior changed (e.g., MCP server start), update the Known Limitations section",
+        "If parameter validation behavior changed, update the MCP Tools section",
+        "All documentation is accurate and internally consistent",
+        "Build compiles without errors, all tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "The convention is: documentation must stay in sync with code. Run through CLAUDE.md and ARCHITECTURE.md checking every factual claim against the code. Previous stories in this PRD may have changed behavior — make sure docs reflect the new behavior."
     }
   ]
 }
