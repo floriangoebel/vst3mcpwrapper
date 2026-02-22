@@ -120,7 +120,7 @@ GUI performEdit ────┘                           try_lock on drain     
                                                                           ──> hostedProcessor_->process()
 ```
 
-MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to update the GUI immediately.
+MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to update the GUI immediately. The queue is capped at 10,000 entries (`kMaxParamQueueSize`) to prevent unbounded memory growth; overflow is logged once per episode and resets on plugin reload.
 
 ### Shutdown Sequence
 
@@ -146,13 +146,13 @@ The processor stores DAW configuration so it can be replayed when a hosted plugi
 ProcessSetup currentSetup_;                      // from setupProcessing()
 std::vector<SpeakerArrangement> storedInputArr_;  // from setBusArrangements()
 std::vector<SpeakerArrangement> storedOutputArr_; // from setBusArrangements()
-bool wrapperActive_;                              // from setActive()
-bool wrapperProcessing_;                          // from setProcessing()
+std::atomic<bool> wrapperActive_;                  // from setActive(), read on msg thread in notify()
+std::atomic<bool> wrapperProcessing_;             // from setProcessing(), read on msg thread in notify()
 std::atomic<bool> hostedActive_;                  // written on main/msg thread, read on audio thread
 std::atomic<bool> hostedProcessing_;              // written on main/msg thread, read on audio thread
 ```
 
-Activation/processing state (`wrapperActive_`, `wrapperProcessing_`) is replayed onto the hosted component in both loading paths: `notify("LoadPlugin")` (runtime loading via MCP/drag-and-drop) and `setState()` (preset recall, undo, session restore while active). `hostedActive_` and `hostedProcessing_` are atomic because they are written on the main/message thread and read on the audio thread in `process()`.
+Activation/processing state (`wrapperActive_`, `wrapperProcessing_`) is replayed onto the hosted component in both loading paths: `notify("LoadPlugin")` (runtime loading via MCP/drag-and-drop) and `setState()` (preset recall, undo, session restore while active). All four flags are `std::atomic<bool>` with `memory_order_relaxed`: `wrapperActive_`/`wrapperProcessing_` are written on the main thread and read on the message thread in `notify()`; `hostedActive_`/`hostedProcessing_` are written on the main/message thread and read on the audio thread in `process()`.
 
 ### Loading Sequence
 
@@ -212,6 +212,8 @@ Some plugins implement both `IComponent` and `IEditController` on the same class
 [N bytes]  pluginPath: UTF-8 string
 [remaining] hosted component state
 ```
+
+Both `writeStateHeader()` and `readStateHeader()` validate `numBytesWritten`/`numBytesRead` after each stream operation, returning `kResultFalse` on partial I/O.
 
 ## MCP API
 

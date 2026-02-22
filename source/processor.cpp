@@ -1,5 +1,6 @@
 #include "processor.h"
 #include "pluginids.h"
+#include "messageids.h"
 #include "hostedplugin.h"
 #include "stateformat.h"
 
@@ -100,32 +101,32 @@ bool Processor::loadHostedPlugin(const std::string& path) {
         hostedProcessor_->setupProcessing(currentSetup_);
     }
 
-    processorReady_ = true;
+    processorReady_.store(true, std::memory_order_relaxed);
     return true;
 }
 
 void Processor::replayDawStateOntoHosted() {
-    if (wrapperActive_ && hostedComponent_) {
+    if (wrapperActive_.load(std::memory_order_relaxed) && hostedComponent_) {
         hostedComponent_->setActive(true);
-        hostedActive_ = true;
+        hostedActive_.store(true, std::memory_order_relaxed);
     }
-    if (wrapperProcessing_ && hostedProcessor_) {
+    if (wrapperProcessing_.load(std::memory_order_relaxed) && hostedProcessor_) {
         hostedProcessor_->setProcessing(true);
-        hostedProcessing_ = true;
+        hostedProcessing_.store(true, std::memory_order_relaxed);
     }
 }
 
 void Processor::unloadHostedPlugin() {
-    processorReady_ = false;
+    processorReady_.store(false, std::memory_order_relaxed);
 
     if (hostedComponent_) {
-        if (hostedProcessing_) {
+        if (hostedProcessing_.load(std::memory_order_relaxed)) {
             hostedProcessor_->setProcessing(false);
-            hostedProcessing_ = false;
+            hostedProcessing_.store(false, std::memory_order_relaxed);
         }
-        if (hostedActive_) {
+        if (hostedActive_.load(std::memory_order_relaxed)) {
             hostedComponent_->setActive(false);
-            hostedActive_ = false;
+            hostedActive_.store(false, std::memory_order_relaxed);
         }
 
         HostedPluginModule::instance().setHostedComponent(nullptr);
@@ -137,19 +138,19 @@ void Processor::unloadHostedPlugin() {
 }
 
 tresult PLUGIN_API Processor::setActive(TBool state) {
-    wrapperActive_ = state;
+    wrapperActive_.store(state, std::memory_order_relaxed);
     if (hostedComponent_) {
         hostedComponent_->setActive(state);
-        hostedActive_ = state;
+        hostedActive_.store(state, std::memory_order_relaxed);
     }
     return AudioEffect::setActive(state);
 }
 
 tresult PLUGIN_API Processor::setProcessing(TBool state) {
-    wrapperProcessing_ = state;
+    wrapperProcessing_.store(state, std::memory_order_relaxed);
     if (hostedProcessor_) {
         hostedProcessor_->setProcessing(state);
-        hostedProcessing_ = state;
+        hostedProcessing_.store(state, std::memory_order_relaxed);
     }
     return kResultOk;
 }
@@ -158,6 +159,9 @@ tresult PLUGIN_API Processor::setBusArrangements(
     SpeakerArrangement* inputs, int32 numIns,
     SpeakerArrangement* outputs, int32 numOuts)
 {
+    if ((!inputs && numIns > 0) || (!outputs && numOuts > 0))
+        return kInvalidArgument;
+
     // Store for replay when loading a hosted plugin mid-session
     storedInputArr_.assign(inputs, inputs + numIns);
     storedOutputArr_.assign(outputs, outputs + numOuts);
@@ -197,7 +201,7 @@ tresult PLUGIN_API Processor::canProcessSampleSize(int32 symbolicSampleSize) {
 }
 
 tresult PLUGIN_API Processor::process(ProcessData& data) {
-    if (processorReady_ && hostedProcessor_ && hostedActive_) {
+    if (processorReady_.load(std::memory_order_relaxed) && hostedProcessor_ && hostedActive_.load(std::memory_order_relaxed)) {
         // Drain pending parameter changes from MCP/GUI and inject into ProcessData
         auto& pluginModule = HostedPluginModule::instance();
         drainBuffer_.clear();
@@ -332,7 +336,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
     if (!message)
         return kResultFalse;
 
-    if (strcmp(message->getMessageID(), "LoadPlugin") == 0) {
+    if (strcmp(message->getMessageID(), MessageIds::kLoadPlugin) == 0) {
         const void* data = nullptr;
         uint32 size = 0;
         if (message->getAttributes()->getBinary("path", data, size) == kResultOk && size > 0) {
@@ -352,7 +356,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
 
             // Send acknowledgment back to controller
             if (auto msg = owned(allocateMessage())) {
-                msg->setMessageID("PluginLoaded");
+                msg->setMessageID(MessageIds::kPluginLoaded);
                 msg->getAttributes()->setBinary("path", path.data(), static_cast<uint32>(path.size()));
                 sendMessage(msg);
             }
@@ -360,7 +364,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
         return kResultOk;
     }
 
-    if (strcmp(message->getMessageID(), "UnloadPlugin") == 0) {
+    if (strcmp(message->getMessageID(), MessageIds::kUnloadPlugin) == 0) {
         unloadHostedPlugin();
         return kResultOk;
     }

@@ -24,8 +24,8 @@ namespace VST3MCPWrapper {
 
 class ProcessorTestAccess {
 public:
-    static bool wrapperActive (const Processor& p) { return p.wrapperActive_; }
-    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_; }
+    static bool wrapperActive (const Processor& p) { return p.wrapperActive_.load (std::memory_order_relaxed); }
+    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_.load (std::memory_order_relaxed); }
     static bool hostedActive (const Processor& p) { return p.hostedActive_.load (); }
     static bool hostedProcessing (const Processor& p) { return p.hostedProcessing_.load (); }
     static bool processorReady (const Processor& p) { return p.processorReady_.load (); }
@@ -812,6 +812,183 @@ TEST_F (ProcessorProcessTest, OnlyMcpChangesWhenDawInputParamChangesNull)
 
     // Original null pointer must be restored
     EXPECT_EQ (data.inputParameterChanges, nullptr);
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);
+}
+
+//------------------------------------------------------------------------
+// Edge case: processorReady_=false skips hosted processor, returns kResultOk
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, ProcessorNotReadySkipsHostedProcessor)
+{
+    const int numSamples = 64;
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, numSamples, false);
+    TestAudioBuffers output (numChannels, numSamples, false);
+
+    // Fill input with known values
+    for (int ch = 0; ch < numChannels; ++ch)
+        for (int s = 0; s < numSamples; ++s)
+            input.float32[ch][s] = 0.5f;
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);  // Not ready
+    ProcessorTestAccess::setHostedActive (*processor_, true);
+
+    // Hosted processor must NOT be called
+    EXPECT_CALL (mockProc, process (::testing::_)).Times (0);
+
+    ProcessData data{};
+    data.numSamples = numSamples;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultOk);
+
+    // Verify passthrough occurred (output should match input)
+    for (int ch = 0; ch < numChannels; ++ch)
+        for (int s = 0; s < numSamples; ++s)
+            EXPECT_FLOAT_EQ (output.float32[ch][s], 0.5f);
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// Edge case: hostedActive_=false skips hosted processor, returns kResultOk
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, HostedNotActiveSkipsHostedProcessor)
+{
+    const int numSamples = 64;
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, numSamples, false);
+    TestAudioBuffers output (numChannels, numSamples, false);
+
+    // Fill input with known values
+    for (int ch = 0; ch < numChannels; ++ch)
+        for (int s = 0; s < numSamples; ++s)
+            input.float32[ch][s] = 0.3f;
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, true);
+    ProcessorTestAccess::setHostedActive (*processor_, false);  // Not active
+
+    // Hosted processor must NOT be called
+    EXPECT_CALL (mockProc, process (::testing::_)).Times (0);
+
+    ProcessData data{};
+    data.numSamples = numSamples;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultOk);
+
+    // Verify passthrough occurred (output should match input)
+    for (int ch = 0; ch < numChannels; ++ch)
+        for (int s = 0; s < numSamples; ++s)
+            EXPECT_FLOAT_EQ (output.float32[ch][s], 0.3f);
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);
+}
+
+//------------------------------------------------------------------------
+// Edge case: numSamples=0 flush still calls hosted processor (VST3 spec)
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, ZeroSampleFlushCallsHostedProcessor)
+{
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, 0, false);
+    TestAudioBuffers output (numChannels, 0, false);
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, true);
+    ProcessorTestAccess::setHostedActive (*processor_, true);
+
+    // Hosted processor MUST be called even with 0 samples
+    EXPECT_CALL (mockProc, process (::testing::_))
+        .WillOnce ([] (ProcessData& d) -> tresult {
+            EXPECT_EQ (d.numSamples, 0);
+            return kResultOk;
+        });
+
+    ProcessData data{};
+    data.numSamples = 0;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+    data.inputParameterChanges = nullptr;
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultOk);
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+    ProcessorTestAccess::setProcessorReady (*processor_, false);
+}
+
+//------------------------------------------------------------------------
+// Edge case: hosted processor error is propagated as return value
+//------------------------------------------------------------------------
+TEST_F (ProcessorProcessTest, HostedProcessorErrorIsPropagated)
+{
+    const int numSamples = 64;
+    const int numChannels = 2;
+
+    TestAudioBuffers input (numChannels, numSamples, false);
+    TestAudioBuffers output (numChannels, numSamples, false);
+
+    MockAudioProcessor mockProc;
+    MockComponent mockComp;
+
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+    ProcessorTestAccess::setProcessorReady (*processor_, true);
+    ProcessorTestAccess::setHostedActive (*processor_, true);
+
+    // Hosted processor returns an error
+    EXPECT_CALL (mockProc, process (::testing::_))
+        .WillOnce (::testing::Return (kResultFalse));
+
+    ProcessData data{};
+    data.numSamples = numSamples;
+    data.symbolicSampleSize = kSample32;
+    data.numInputs = 1;
+    data.numOutputs = 1;
+    data.inputs = &input.bus;
+    data.outputs = &output.bus;
+    data.inputParameterChanges = nullptr;
+
+    auto result = processor_->process (data);
+    EXPECT_EQ (result, kResultFalse);
 
     ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
     ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);

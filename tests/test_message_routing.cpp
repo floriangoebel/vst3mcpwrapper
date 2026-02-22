@@ -2,6 +2,7 @@
 #include <gmock/gmock.h>
 
 #include "processor.h"
+#include "messageids.h"
 #include "hostedplugin.h"
 #include "mocks/mock_vst3.h"
 
@@ -92,7 +93,7 @@ TEST_F (MessageRoutingTest, LoadPluginMessageExtractsPath)
     uint32 pathSize = static_cast<uint32> (testPath.size ());
 
     EXPECT_CALL (msg, getMessageID ())
-        .WillRepeatedly (::testing::Return ("LoadPlugin"));
+        .WillRepeatedly (::testing::Return (MessageIds::kLoadPlugin));
     EXPECT_CALL (msg, getAttributes ())
         .WillRepeatedly (::testing::Return (&attrs));
     EXPECT_CALL (attrs, getBinary (::testing::StrEq ("path"), ::testing::_, ::testing::_))
@@ -140,7 +141,7 @@ TEST_F (MessageRoutingTest, LoadPluginMessageMissingPathAttribute)
     MockAttributeList attrs;
 
     EXPECT_CALL (msg, getMessageID ())
-        .WillRepeatedly (::testing::Return ("LoadPlugin"));
+        .WillRepeatedly (::testing::Return (MessageIds::kLoadPlugin));
     EXPECT_CALL (msg, getAttributes ())
         .WillRepeatedly (::testing::Return (&attrs));
     // getBinary fails — path attribute not set
@@ -166,7 +167,7 @@ TEST_F (MessageRoutingTest, LoadPluginMessageEmptyPathAttribute)
     uint32 zeroSize = 0;
 
     EXPECT_CALL (msg, getMessageID ())
-        .WillRepeatedly (::testing::Return ("LoadPlugin"));
+        .WillRepeatedly (::testing::Return (MessageIds::kLoadPlugin));
     EXPECT_CALL (msg, getAttributes ())
         .WillRepeatedly (::testing::Return (&attrs));
     // getBinary succeeds but size is 0
@@ -196,7 +197,7 @@ TEST_F (MessageRoutingTest, LoadPluginMessageNullDataPointerNoCrash)
     uint32 pathSize = 10; // non-zero size but null data pointer
 
     EXPECT_CALL (msg, getMessageID ())
-        .WillRepeatedly (::testing::Return ("LoadPlugin"));
+        .WillRepeatedly (::testing::Return (MessageIds::kLoadPlugin));
     EXPECT_CALL (msg, getAttributes ())
         .WillRepeatedly (::testing::Return (&attrs));
     // getBinary returns kResultOk but data pointer is nullptr
@@ -237,7 +238,7 @@ TEST_F (MessageRoutingTest, UnloadPluginMessageUnloadsPlugin)
 
     MockMessage msg;
     EXPECT_CALL (msg, getMessageID ())
-        .WillRepeatedly (::testing::Return ("UnloadPlugin"));
+        .WillRepeatedly (::testing::Return (MessageIds::kUnloadPlugin));
 
     tresult result = processor_->notify (&msg);
 

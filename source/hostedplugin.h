@@ -67,6 +67,9 @@ private:
 
     std::mutex paramChangeMutex_;
     std::vector<ParamChange> pendingParamChanges_;
+    bool paramQueueOverflowWarned_ = false; // guarded by paramChangeMutex_
+
+    static constexpr size_t kMaxParamQueueSize = 10000;
 };
 
 // Convert VST3 UTF-16 (TChar/char16_t) string to UTF-8 std::string.

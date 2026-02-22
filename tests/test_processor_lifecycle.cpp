@@ -19,8 +19,8 @@ namespace VST3MCPWrapper {
 
 class ProcessorTestAccess {
 public:
-    static bool wrapperActive (const Processor& p) { return p.wrapperActive_; }
-    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_; }
+    static bool wrapperActive (const Processor& p) { return p.wrapperActive_.load (std::memory_order_relaxed); }
+    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_.load (std::memory_order_relaxed); }
     static bool hostedActive (const Processor& p) { return p.hostedActive_.load (); }
     static bool hostedProcessing (const Processor& p) { return p.hostedProcessing_.load (); }
 
@@ -321,6 +321,110 @@ TEST_F (ProcessorLifecycleTest, SetBusArrangementsForwardsToHostedProcessor)
     // Also stored for replay
     EXPECT_EQ (ProcessorTestAccess::storedInputArr (*processor_).size (), 1u);
     EXPECT_EQ (ProcessorTestAccess::storedOutputArr (*processor_).size (), 1u);
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// setBusArrangements rejects null inputs with positive count
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsRejectsNullInputs)
+{
+    SpeakerArrangement outputs[] = {SpeakerArr::kStereo};
+    EXPECT_EQ (processor_->setBusArrangements (nullptr, 1, outputs, 1), kInvalidArgument);
+}
+
+//------------------------------------------------------------------------
+// setBusArrangements rejects null outputs with positive count
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsRejectsNullOutputs)
+{
+    SpeakerArrangement inputs[] = {SpeakerArr::kStereo};
+    EXPECT_EQ (processor_->setBusArrangements (inputs, 1, nullptr, 1), kInvalidArgument);
+}
+
+//------------------------------------------------------------------------
+// setBusArrangements accepts null pointers with zero counts (reset case)
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsAcceptsNullWithZeroCounts)
+{
+    EXPECT_NE (processor_->setBusArrangements (nullptr, 0, nullptr, 0), kInvalidArgument);
+}
+
+//------------------------------------------------------------------------
+// canProcessSampleSize — defaults when no hosted plugin
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, CanProcessSampleSize32WithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample32), kResultTrue);
+}
+
+TEST_F (ProcessorLifecycleTest, CanProcessSampleSize64WithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample64), kResultFalse);
+}
+
+//------------------------------------------------------------------------
+// canProcessSampleSize — forwards to hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, CanProcessSampleSizeForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, canProcessSampleSize (kSample32))
+        .WillOnce (::testing::Return (kResultTrue));
+    EXPECT_CALL (mockProc, canProcessSampleSize (kSample64))
+        .WillOnce (::testing::Return (kResultTrue));
+
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample32), kResultTrue);
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample64), kResultTrue);
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// getLatencySamples — default when no hosted plugin
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetLatencySamplesReturnsZeroWithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->getLatencySamples (), 0u);
+}
+
+//------------------------------------------------------------------------
+// getLatencySamples — forwards to hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetLatencySamplesForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, getLatencySamples ()).WillOnce (::testing::Return (256));
+
+    EXPECT_EQ (processor_->getLatencySamples (), 256u);
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// getTailSamples — default when no hosted plugin
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetTailSamplesReturnsZeroWithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->getTailSamples (), 0u);
+}
+
+//------------------------------------------------------------------------
+// getTailSamples — forwards to hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetTailSamplesForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, getTailSamples ()).WillOnce (::testing::Return (1024));
+
+    EXPECT_EQ (processor_->getTailSamples (), 1024u);
 
     ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
 }

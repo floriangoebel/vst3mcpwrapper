@@ -2,8 +2,70 @@
 #include "stateformat.h"
 #include "public.sdk/source/vst/utility/memoryibstream.h"
 
+#include <algorithm>
+#include <cstring>
+#include <vector>
+
 using namespace Steinberg;
 using namespace VST3MCPWrapper;
+
+// Mock IBStream with a fixed capacity — returns kResultOk but short-writes
+// when the buffer is full, simulating a stream that silently truncates.
+class LimitedCapacityStream : public IBStream {
+public:
+    explicit LimitedCapacityStream(int32 capacity) : capacity_(capacity) {}
+
+    tresult PLUGIN_API read(void* buffer, int32 numBytes, int32* numBytesRead) override {
+        int32 avail = static_cast<int32>(data_.size()) - pos_;
+        int32 toRead = std::min(numBytes, std::max(avail, int32{0}));
+        if (toRead > 0)
+            std::memcpy(buffer, data_.data() + pos_, toRead);
+        pos_ += toRead;
+        if (numBytesRead)
+            *numBytesRead = toRead;
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API write(void* buffer, int32 numBytes, int32* numBytesWritten) override {
+        int32 avail = capacity_ - static_cast<int32>(data_.size());
+        int32 toWrite = std::min(numBytes, std::max(avail, int32{0}));
+        if (toWrite > 0) {
+            auto* src = static_cast<const char*>(buffer);
+            data_.insert(data_.end(), src, src + toWrite);
+        }
+        if (numBytesWritten)
+            *numBytesWritten = toWrite;
+        return kResultOk; // Always returns OK — short write indicated via numBytesWritten
+    }
+
+    tresult PLUGIN_API seek(int64 pos, int32 mode, int64* result) override {
+        if (mode == kIBSeekSet)
+            pos_ = static_cast<int32>(pos);
+        else if (mode == kIBSeekCur)
+            pos_ += static_cast<int32>(pos);
+        else if (mode == kIBSeekEnd)
+            pos_ = static_cast<int32>(data_.size()) + static_cast<int32>(pos);
+        if (result)
+            *result = pos_;
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API tell(int64* pos) override {
+        if (pos)
+            *pos = pos_;
+        return kResultOk;
+    }
+
+    // IUnknown — minimal stubs
+    tresult PLUGIN_API queryInterface(const TUID, void**) override { return kNoInterface; }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+
+private:
+    int32 capacity_;
+    std::vector<char> data_;
+    int32 pos_ = 0;
+};
 
 // --- Round-trip tests ---
 
@@ -210,4 +272,37 @@ TEST(StateFormat, WriteNullStreamFails) {
 TEST(StateFormat, ReadNullStreamFails) {
     std::string path;
     EXPECT_EQ(readStateHeader(nullptr, path), kResultFalse);
+}
+
+// --- Short write detection ---
+
+TEST(StateFormat, ShortWriteOnMagicDetected) {
+    // Capacity of 2 bytes — magic write (4 bytes) will be short
+    LimitedCapacityStream stream(2);
+    EXPECT_EQ(writeStateHeader(&stream, "test"), kResultFalse);
+}
+
+TEST(StateFormat, ShortWriteOnVersionDetected) {
+    // Capacity of 6 bytes — magic (4) succeeds, version (4) will be short
+    LimitedCapacityStream stream(6);
+    EXPECT_EQ(writeStateHeader(&stream, "test"), kResultFalse);
+}
+
+TEST(StateFormat, ShortWriteOnPathLenDetected) {
+    // Capacity of 10 bytes — magic (4) + version (4) succeed, pathLen (4) will be short
+    LimitedCapacityStream stream(10);
+    EXPECT_EQ(writeStateHeader(&stream, "test"), kResultFalse);
+}
+
+TEST(StateFormat, ShortWriteOnPathDataDetected) {
+    // Capacity of 14 bytes — header (12) succeeds, path "test" (4) will be short
+    LimitedCapacityStream stream(14);
+    EXPECT_EQ(writeStateHeader(&stream, "test-path"), kResultFalse);
+}
+
+TEST(StateFormat, WriteSucceedsWithSufficientCapacity) {
+    const std::string path = "test";
+    // Header is 12 bytes + 4 bytes path = 16 bytes total
+    LimitedCapacityStream stream(16);
+    EXPECT_EQ(writeStateHeader(&stream, path), kResultOk);
 }

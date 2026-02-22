@@ -55,6 +55,7 @@ endif()
 # --- Plugin target ---
 smtg_add_vst3plugin(VST3MCPWrapper
     source/pluginids.h
+    source/messageids.h
     source/stateformat.h
     source/dispatcher.h
     source/version.h
@@ -109,6 +110,8 @@ target_link_libraries(VST3MCPWrapper
         sdk_hosting
         mcp
 )
+
+target_compile_options(VST3MCPWrapper PRIVATE -Wall -Wextra -Wno-unused-parameter)
 
 target_include_directories(VST3MCPWrapper
     PRIVATE

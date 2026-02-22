@@ -214,14 +214,13 @@ TEST(MCPServerIntegration, DuplicatePortBindDoesNotCrash) {
     // or succeed partially. The key assertion is: no crash, no std::terminate.
     {
         auto server2 = createTestServer();
-        bool startedOk = true;
         try {
             server2->start(false);
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         } catch (const std::exception&) {
-            startedOk = false;
+            // Expected — duplicate bind may throw
         } catch (...) {
-            startedOk = false;
+            // Expected — duplicate bind may throw
         }
         // Whether it started or failed, stopping should not crash
         server2->stop();

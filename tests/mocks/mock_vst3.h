@@ -241,5 +241,44 @@ private:
 };
 
 //------------------------------------------------------------------------
+// MockComponentHandler - implements IComponentHandler (extends FUnknown)
+// Used to mock the DAW's component handler for testing forwarding behavior.
+//------------------------------------------------------------------------
+class MockComponentHandler : public IComponentHandler
+{
+public:
+    MockComponentHandler () : refCount_ (1) {}
+
+    // --- FUnknown ---
+    uint32 PLUGIN_API addRef () override { return ++refCount_; }
+    uint32 PLUGIN_API release () override
+    {
+        auto r = --refCount_;
+        return r;
+    }
+    tresult PLUGIN_API queryInterface (const TUID _iid, void** obj) override
+    {
+        if (FUnknownPrivate::iidEqual (_iid, FUnknown::iid) ||
+            FUnknownPrivate::iidEqual (_iid, IComponentHandler::iid))
+        {
+            addRef ();
+            *obj = static_cast<IComponentHandler*> (this);
+            return kResultOk;
+        }
+        if (obj) *obj = nullptr;
+        return kNoInterface;
+    }
+
+    // --- IComponentHandler ---
+    MOCK_METHOD (tresult, beginEdit, (ParamID), (override));
+    MOCK_METHOD (tresult, performEdit, (ParamID, ParamValue), (override));
+    MOCK_METHOD (tresult, endEdit, (ParamID), (override));
+    MOCK_METHOD (tresult, restartComponent, (int32), (override));
+
+private:
+    std::atomic<uint32> refCount_;
+};
+
+//------------------------------------------------------------------------
 } // namespace Testing
 } // namespace VST3MCPWrapper
