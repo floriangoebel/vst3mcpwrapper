@@ -55,6 +55,7 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `source/factory.cpp` | VST3 plugin factory registration (not distributable) |
 | `resource/Info.plist.in` | macOS bundle Info.plist template |
 | `cmake/patch_mcp_version.cmake` | Build-time patch for cpp-mcp protocol version (2024-11-05 → 2025-03-26) |
+| `cmake/validate_bundle_linux.cmake` | CTest validation script — checks Linux VST3 bundle layout (directory structure + ELF shared object) |
 | `.mcp.json` | Project MCP server config — connects Claude Code to the running plugin |
 | `.vscode/tasks.json` | VS Code build tasks (Cmd+Shift+B to build) |
 
@@ -69,7 +70,10 @@ cmake --build build --target VST3MCPWrapper
 
 Output: `build/VST3/Debug/VST3MCPWrapper.vst3`
 
-Point your DAW's VST3 scan path to `build/VST3/Debug/` to load the plugin directly from the build folder.
+- **macOS**: A macOS bundle containing `Contents/MacOS/VST3MCPWrapper`
+- **Linux**: A directory tree containing `Contents/x86_64-linux/VST3MCPWrapper.so`
+
+Point your DAW's VST3 scan path to `build/VST3/Debug/` to load the plugin directly from the build folder. On Linux, you can also symlink the bundle to `~/.vst3/`: `ln -s $(pwd)/build/VST3/Debug/VST3MCPWrapper.vst3 ~/.vst3/`
 
 ### Dependencies
 
@@ -90,6 +94,9 @@ Point your DAW's VST3 scan path to `build/VST3/Debug/` to load the plugin direct
 - Ad-hoc code signing via post-build `codesign --force --sign -` — required for hosts with hardened runtime (e.g. Ableton Live)
 - `memorystream.cpp` is not in any SDK library target — use header-only `ResizableMemoryIBStream` instead
 - cpp-mcp is patched via `PATCH_COMMAND` + `cmake/patch_mcp_version.cmake` to fix protocol version mismatch with Claude Code. If the fetched source is cached, delete `build/_deps/cpp_mcp-*` and re-run `cmake -B build` to re-apply the patch.
+- On Linux, `SMTG_ENABLE_VSTGUI_SUPPORT OFF` must be set (not just `SMTG_ADD_VSTGUI OFF`) to fully disable VSTGUI and avoid X11 dev header requirements
+- On Linux, the `mcp` static library needs `POSITION_INDEPENDENT_CODE ON` since VST3 plugins are `.so` shared objects
+- Linux VST3 bundle layout is validated via `cmake/validate_bundle_linux.cmake` CTest test (runs with `ctest`)
 
 ## MCP Server
 

@@ -68,3 +68,13 @@ target_include_directories(VST3MCPWrapper_Tests
 
 include(GoogleTest)
 gtest_discover_tests(VST3MCPWrapper_Tests)
+
+# Validate Linux VST3 bundle layout via ctest
+if(NOT APPLE)
+    add_test(
+        NAME validate_vst3_bundle_layout
+        COMMAND ${CMAKE_COMMAND}
+            -DSO_FILE=$<TARGET_FILE:VST3MCPWrapper>
+            -P ${CMAKE_SOURCE_DIR}/cmake/validate_bundle_linux.cmake
+    )
+endif()
