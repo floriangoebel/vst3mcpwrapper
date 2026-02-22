@@ -15,6 +15,7 @@ add_executable(VST3MCPWrapper_Tests
     test_stateformat.cpp
     test_param_queue.cpp
     test_hostedplugin.cpp
+    test_mock_vst3.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
 )
 
@@ -44,6 +45,7 @@ target_link_libraries(VST3MCPWrapper_Tests
 target_include_directories(VST3MCPWrapper_Tests
     PRIVATE
         ${CMAKE_SOURCE_DIR}/source
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 include(GoogleTest)
