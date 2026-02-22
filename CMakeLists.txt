@@ -58,6 +58,7 @@ smtg_add_vst3plugin(VST3MCPWrapper
     source/messageids.h
     source/stateformat.h
     source/dispatcher.h
+    source/logging.h
     source/version.h
     source/hostedplugin.h
     source/hostedplugin.cpp

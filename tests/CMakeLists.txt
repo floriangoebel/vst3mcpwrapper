@@ -26,6 +26,10 @@ add_executable(VST3MCPWrapper_Tests
     test_mcp_server_integration.cpp
     test_plugin_scanning.cpp
     test_controller_componenthandler.cpp
+    test_passthrough_aliasing.cpp
+    test_queue_overflow.cpp
+    test_unload_cleanup.cpp
+    test_state_roundtrip.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
     ${CMAKE_SOURCE_DIR}/source/processor.cpp
     ${CMAKE_SOURCE_DIR}/source/controller.cpp
@@ -50,6 +54,7 @@ else()
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_linux.cpp
         ${CMAKE_SOURCE_DIR}/source/dispatcher_linux.cpp
         ${CMAKE_SOURCE_DIR}/source/wrapperview_linux.cpp
+        test_wrapperview_linux.cpp
     )
 endif()
 

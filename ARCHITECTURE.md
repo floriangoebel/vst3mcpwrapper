@@ -105,7 +105,7 @@ Four thread contexts exist:
 
 ### Rules
 
-1. **Audio thread never blocks.** No mutexes, no allocation, no syscalls. Parameter queue uses `try_lock` — if the lock is held by a producer, changes arrive next buffer (~1-5ms later).
+1. **Audio thread never blocks.** No mutexes, no allocation, no syscalls. Parameter queue uses `try_lock` — if the lock is held by a producer, changes arrive next buffer (~1-5ms later). The drain buffer (`drainBuffer_`) is pre-reserved to 256 entries in the Processor constructor to avoid heap allocation on the first `process()` call.
 2. **Main thread owns all VST3 lifecycle.** Plugin loading, component creation/destruction, view management — all on main thread.
 3. **MCP thread reads, main thread writes.** The MCP thread reads parameter state from the hosted controller (thread-safe via `IPtr` copy under mutex). Any mutation (load/unload) is dispatched via `MainThreadDispatcher` + `std::promise/std::future`. On macOS, the dispatcher uses `dispatch_async(dispatch_get_main_queue())`; on Linux, it uses a dedicated worker thread with a condition variable. Dispatched tasks check a shared `alive` flag before accessing the controller — preventing use-after-free during shutdown.
 4. **Shutdown is safe.** `MainThreadDispatcher::shutdown()` sets the alive flag (`std::shared_ptr<std::atomic<bool>>`) to `false` before `server->stop()`, so dispatched tasks bail out instead of accessing the dying controller. In-flight MCP handlers use `wait_for` with a 5-second timeout, preventing deadlock if the dispatch thread is blocked. After the server thread exits, teardown proceeds.
