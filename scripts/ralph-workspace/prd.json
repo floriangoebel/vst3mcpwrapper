@@ -29,7 +29,7 @@
         "If a test is fundamentally macOS-only, gate it with a platform check and document why"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Tests were written and validated on macOS. Potential Linux issues: TChar handling (char16_t vs wchar_t), os_log references in test code, mock ref counting edge cases, ResizableMemoryIBStream behavior. The test target already has if(APPLE)/else() branches for module_linux.cpp and dispatcher_linux.cpp."
     },
     {

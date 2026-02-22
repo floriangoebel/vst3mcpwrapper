@@ -41,6 +41,7 @@
 - On Linux, the `mcp` static library must have `POSITION_INDEPENDENT_CODE ON` since VST3 plugins are .so shared objects (set via `set_target_properties` after `FetchContent_MakeAvailable`)
 - GCC requires explicit `#include <optional>` — Clang/macOS may find it transitively but GCC does not
 - Linux VST3 bundle layout: `build/VST3/Debug/VST3MCPWrapper.vst3/Contents/x86_64-linux/VST3MCPWrapper.so`
+- Test suite is fully platform-independent — all 118 tests pass identically on macOS (Clang) and Linux (GCC) with no platform gating needed
 
 ---
 
@@ -59,4 +60,15 @@ Started: new PRD — Linux Platform Support
   - GCC is stricter about transitive includes — always include `<optional>`, `<functional>`, etc. explicitly in headers that use them
   - cmake 3.31.4 installed to `~/.local/bin` via binary tarball (no sudo needed)
   - Build output on Linux: `build/VST3/Debug/VST3MCPWrapper.vst3/Contents/x86_64-linux/VST3MCPWrapper.so`
+---
+
+## 2026-02-22 - US-002
+- Ran all 118 tests on Linux — all passed with zero failures, zero warnings
+- No code changes needed — the test suite was already platform-independent
+- Verified with: `ctest --test-dir build --output-on-failure` (0.59s total)
+- Also verified no compiler warnings in source/ or tests/ files during build
+- **Learnings for future iterations:**
+  - The test suite is fully platform-independent between macOS and Linux — TChar handling, ResizableMemoryIBStream, mock ref counting, and state format all work identically on both platforms
+  - GCC and Clang produce the same behavior for all 118 tests — no platform-specific test gating was needed
+  - The `fillTChar()` helper and `char16_t` literal approach for TChar buffers works correctly on Linux (where TChar is char16_t, same as macOS)
 ---
