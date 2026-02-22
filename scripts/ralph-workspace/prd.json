@@ -44,7 +44,7 @@
         "Document the output path in CLAUDE.md if it differs from the macOS path"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "The VST3 SDK CMake macros (smtg_add_vst3plugin) should handle Linux bundle layout automatically, but this hasn't been verified. On macOS the output is build/VST3/Debug/VST3MCPWrapper.vst3 (a macOS bundle). On Linux it should be a directory tree. Standard Linux VST3 scan paths: ~/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/. The VST3 SDK's smtg_target_set_bundle is macOS-only (inside if(APPLE))."
     },
     {
@@ -63,7 +63,7 @@
         "Build compiles without errors"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "The Linux dispatcher (source/dispatcher_linux.cpp) uses a worker thread with std::condition_variable and std::queue<std::function<void()>>. The dispatch<R>() template is in dispatcher.h. These tests should exercise the Linux-specific implementation path. On macOS these tests can be skipped or adapted since the macOS dispatcher uses GCD instead."
     },
     {
@@ -81,7 +81,7 @@
         "Build compiles without errors"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "cpp-mcp uses httplib internally. This test doesn't need any VST3 dependencies — it just tests that the MCP server library works on Linux. Use httplib::Client (available from cpp-mcp includes) for making test requests. The server should start and stop within the test, no background process needed. Use a high port number to avoid permission issues and conflicts."
     },
     {
