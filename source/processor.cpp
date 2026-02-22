@@ -1,5 +1,6 @@
 #include "processor.h"
 #include "pluginids.h"
+#include "messageids.h"
 #include "hostedplugin.h"
 #include "stateformat.h"
 
@@ -332,7 +333,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
     if (!message)
         return kResultFalse;
 
-    if (strcmp(message->getMessageID(), "LoadPlugin") == 0) {
+    if (strcmp(message->getMessageID(), MessageIds::kLoadPlugin) == 0) {
         const void* data = nullptr;
         uint32 size = 0;
         if (message->getAttributes()->getBinary("path", data, size) == kResultOk && size > 0) {
@@ -352,7 +353,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
 
             // Send acknowledgment back to controller
             if (auto msg = owned(allocateMessage())) {
-                msg->setMessageID("PluginLoaded");
+                msg->setMessageID(MessageIds::kPluginLoaded);
                 msg->getAttributes()->setBinary("path", path.data(), static_cast<uint32>(path.size()));
                 sendMessage(msg);
             }
@@ -360,7 +361,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
         return kResultOk;
     }
 
-    if (strcmp(message->getMessageID(), "UnloadPlugin") == 0) {
+    if (strcmp(message->getMessageID(), MessageIds::kUnloadPlugin) == 0) {
         unloadHostedPlugin();
         return kResultOk;
     }

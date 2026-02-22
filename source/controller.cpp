@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "dispatcher.h"
 #include "hostedplugin.h"
+#include "messageids.h"
 #include "mcp_param_handlers.h"
 #include "mcp_plugin_handlers.h"
 #include "stateformat.h"
@@ -292,7 +293,7 @@ tresult PLUGIN_API Controller::notify(IMessage* message) {
     if (!message)
         return kResultFalse;
 
-    if (strcmp(message->getMessageID(), "PluginLoaded") == 0) {
+    if (strcmp(message->getMessageID(), MessageIds::kPluginLoaded) == 0) {
         // Processor has finished loading — the hosted component is now available
         // in the singleton. Connect IConnectionPoint and sync state so plugins
         // that rely on component↔controller messaging work correctly.
@@ -371,7 +372,7 @@ void Controller::unloadPlugin() {
 
     // Tell the processor to unload
     if (auto msg = owned(allocateMessage())) {
-        msg->setMessageID("UnloadPlugin");
+        msg->setMessageID(MessageIds::kUnloadPlugin);
         sendMessage(msg);
     }
 
@@ -500,7 +501,7 @@ bool Controller::setupHostedController() {
 
 void Controller::sendLoadMessage(const std::string& path) {
     if (auto msg = owned(allocateMessage())) {
-        msg->setMessageID("LoadPlugin");
+        msg->setMessageID(MessageIds::kLoadPlugin);
         msg->getAttributes()->setBinary("path", path.data(), static_cast<uint32>(path.size()));
         sendMessage(msg);
     }
