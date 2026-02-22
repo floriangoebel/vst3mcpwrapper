@@ -20,7 +20,7 @@ class WrapperPlugView : public Steinberg::IPlugView,
                         public Steinberg::IPlugFrame {
 public:
     explicit WrapperPlugView(Controller* controller);
-    ~WrapperPlugView();
+    virtual ~WrapperPlugView();
 
     // Switch from drop zone to the hosted plugin's view (in-place)
     void switchToHostedView(Steinberg::IPlugView* hostedView);

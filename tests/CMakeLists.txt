@@ -68,6 +68,8 @@ target_include_directories(VST3MCPWrapper_Tests
         ${cpp_mcp_SOURCE_DIR}/common
 )
 
+target_compile_options(VST3MCPWrapper_Tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
 add_dependencies(VST3MCPWrapper_Tests VST3MCPWrapper)
 target_compile_definitions(VST3MCPWrapper_Tests PRIVATE
     "TEST_PLUGIN_SO_PATH=\"$<TARGET_FILE:VST3MCPWrapper>\""

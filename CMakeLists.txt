@@ -111,6 +111,8 @@ target_link_libraries(VST3MCPWrapper
         mcp
 )
 
+target_compile_options(VST3MCPWrapper PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
 target_include_directories(VST3MCPWrapper
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/source
