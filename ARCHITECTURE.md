@@ -17,7 +17,20 @@ DAW Session
 
 Currently limited to a single instance (singleton architecture, fixed MCP port 8771). Multi-instance support is planned for Phase 2.
 
-**Platform support:** macOS (full GUI with drop zone) and Linux (headless — MCP tools and audio passthrough work, but no GUI). Platform-specific code is isolated: `.mm` files for macOS, `_linux.cpp` files for Linux. The `MainThreadDispatcher` abstracts macOS GCD / Linux worker thread dispatch.
+**Platform support:** macOS and Linux (Ubuntu 24.04+ verified).
+
+| | macOS | Linux |
+|---|---|---|
+| Audio passthrough | Yes | Yes |
+| MCP server & tools | Yes | Yes |
+| GUI drop zone | Native NSView drag-and-drop | No (headless, `WrapperPlugView` is a no-op stub) |
+| Hosted plugin GUI | Forwarded via `createView` | Not displayed |
+| Plugin loading | Drag-and-drop or MCP `load_plugin` | MCP `load_plugin` only |
+| Dispatcher | GCD `dispatch_async(dispatch_get_main_queue())` | Dedicated worker thread with condition variable |
+| Bundle format | `.vst3` macOS bundle (`Contents/MacOS/`) | `.vst3` directory tree (`Contents/x86_64-linux/`) |
+| VST3 scan paths | `~/Library/Audio/Plug-Ins/VST3/`, `/Library/Audio/Plug-Ins/VST3/` | `~/.vst3/`, `/usr/lib/vst3/`, `/usr/local/lib/vst3/` |
+
+Platform-specific code is isolated: `.mm` files for macOS Objective-C++, `_linux.cpp` files for Linux. The `MainThreadDispatcher` abstracts the platform dispatch mechanism.
 
 ## Component Diagram
 
@@ -270,7 +283,7 @@ Version 2 adds the instance ID. Version 1 states remain loadable (generate a new
 
 Each instance's MCP server binds to an OS-assigned port (bind to port 0), then registers in a discovery file:
 
-**Discovery file** at `~/Library/Application Support/VST3MCPWrapper/instances.json`:
+**Discovery file** at `~/Library/Application Support/VST3MCPWrapper/instances.json` (macOS) or `~/.local/share/VST3MCPWrapper/instances.json` (Linux):
 
 ```json
 {

@@ -23,6 +23,9 @@ add_executable(VST3MCPWrapper_Tests
     test_mcp_plugin_tools.cpp
     test_message_routing.cpp
     test_shutdown.cpp
+    test_dispatcher_linux.cpp
+    test_mcp_server_integration.cpp
+    test_plugin_scanning.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
     ${CMAKE_SOURCE_DIR}/source/processor.cpp
 )
@@ -68,3 +71,13 @@ target_include_directories(VST3MCPWrapper_Tests
 
 include(GoogleTest)
 gtest_discover_tests(VST3MCPWrapper_Tests)
+
+# Validate Linux VST3 bundle layout via ctest
+if(NOT APPLE)
+    add_test(
+        NAME validate_vst3_bundle_layout
+        COMMAND ${CMAKE_COMMAND}
+            -DSO_FILE=$<TARGET_FILE:VST3MCPWrapper>
+            -P ${CMAKE_SOURCE_DIR}/cmake/validate_bundle_linux.cmake
+    )
+endif()
