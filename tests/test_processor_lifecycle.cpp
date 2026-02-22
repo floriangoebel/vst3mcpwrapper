@@ -350,3 +350,81 @@ TEST_F (ProcessorLifecycleTest, SetBusArrangementsAcceptsNullWithZeroCounts)
 {
     EXPECT_NE (processor_->setBusArrangements (nullptr, 0, nullptr, 0), kInvalidArgument);
 }
+
+//------------------------------------------------------------------------
+// canProcessSampleSize — defaults when no hosted plugin
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, CanProcessSampleSize32WithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample32), kResultTrue);
+}
+
+TEST_F (ProcessorLifecycleTest, CanProcessSampleSize64WithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample64), kResultFalse);
+}
+
+//------------------------------------------------------------------------
+// canProcessSampleSize — forwards to hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, CanProcessSampleSizeForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, canProcessSampleSize (kSample32))
+        .WillOnce (::testing::Return (kResultTrue));
+    EXPECT_CALL (mockProc, canProcessSampleSize (kSample64))
+        .WillOnce (::testing::Return (kResultTrue));
+
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample32), kResultTrue);
+    EXPECT_EQ (processor_->canProcessSampleSize (kSample64), kResultTrue);
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// getLatencySamples — default when no hosted plugin
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetLatencySamplesReturnsZeroWithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->getLatencySamples (), 0u);
+}
+
+//------------------------------------------------------------------------
+// getLatencySamples — forwards to hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetLatencySamplesForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, getLatencySamples ()).WillOnce (::testing::Return (256));
+
+    EXPECT_EQ (processor_->getLatencySamples (), 256u);
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// getTailSamples — default when no hosted plugin
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetTailSamplesReturnsZeroWithoutHostedPlugin)
+{
+    EXPECT_EQ (processor_->getTailSamples (), 0u);
+}
+
+//------------------------------------------------------------------------
+// getTailSamples — forwards to hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, GetTailSamplesForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, getTailSamples ()).WillOnce (::testing::Return (1024));
+
+    EXPECT_EQ (processor_->getTailSamples (), 1024u);
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
