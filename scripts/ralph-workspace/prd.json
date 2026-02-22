@@ -111,7 +111,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "These tests exercise HostedPluginModule::load() and unload() error paths. The module uses a real Module::create() call which will fail for nonexistent paths — that's the correct behavior to test (no mocking needed for this). Focus on verifying the singleton returns to a clean state after errors."
     },
     {
