@@ -27,17 +27,23 @@ add_executable(VST3MCPWrapper_Tests
     ${CMAKE_SOURCE_DIR}/source/processor.cpp
 )
 
-# Platform-specific module loading required by hostedplugin.cpp
+# Platform-specific module loading and dispatch required by hostedplugin.cpp / dispatcher
 if(APPLE)
     target_sources(VST3MCPWrapper_Tests PRIVATE
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm
+        ${CMAKE_SOURCE_DIR}/source/dispatcher_mac.mm
     )
     set_source_files_properties(
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm
+        ${CMAKE_SOURCE_DIR}/source/dispatcher_mac.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
     target_link_libraries(VST3MCPWrapper_Tests PRIVATE
         "-framework Foundation" "-framework CoreFoundation" "-framework AppKit"
+    )
+else()
+    target_sources(VST3MCPWrapper_Tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/source/dispatcher_linux.cpp
     )
 endif()
 

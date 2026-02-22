@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "dispatcher.h"
 #include "hostedplugin.h"
 #include "mcp_param_handlers.h"
 #include "mcp_plugin_handlers.h"
@@ -15,9 +16,7 @@
 #include "mcp_server.h"
 #include "mcp_tool.h"
 
-#include <atomic>
 #include <chrono>
-#include <dispatch/dispatch.h>
 #include <future>
 #include <os/log.h>
 
@@ -32,7 +31,7 @@ static constexpr int kMCPServerPort = 8771;
 struct Controller::MCPServer {
     std::unique_ptr<mcp::server> server;
     std::thread serverThread;
-    std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>>(true);
+    MainThreadDispatcher dispatcher;
 
     void start(Controller* controller) {
         mcp::server::configuration conf;
@@ -100,23 +99,16 @@ struct Controller::MCPServer {
             .build();
 
         server->register_tool(loadPluginTool,
-            [controller, alive = this->alive](const mcp::json& params, const std::string& session_id) -> mcp::json {
+            [controller, &dispatcher = this->dispatcher](const mcp::json& params, const std::string& session_id) -> mcp::json {
                 std::string path = params["path"].get<std::string>();
 
-                if (!*alive) {
+                if (!dispatcher.isAlive()) {
                     return handleShuttingDown();
                 }
 
-                auto promise = std::make_shared<std::promise<std::string>>();
-                auto future = promise->get_future();
-                auto flag = alive;
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (!*flag) {
-                        promise->set_value("Plugin is shutting down");
-                        return;
-                    }
-                    promise->set_value(controller->loadPlugin(path));
-                });
+                auto future = dispatcher.dispatch<std::string>(
+                    [controller, path]() { return controller->loadPlugin(path); },
+                    std::string("Plugin is shutting down"));
 
                 if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
                     return handleTimeout("Load plugin");
@@ -132,8 +124,8 @@ struct Controller::MCPServer {
             .build();
 
         server->register_tool(unloadPluginTool,
-            [controller, alive = this->alive](const mcp::json& params, const std::string& session_id) -> mcp::json {
-                if (!*alive) {
+            [controller, &dispatcher = this->dispatcher](const mcp::json& params, const std::string& session_id) -> mcp::json {
+                if (!dispatcher.isAlive()) {
                     return handleShuttingDown();
                 }
 
@@ -141,15 +133,8 @@ struct Controller::MCPServer {
                     return handleUnloadPluginNotLoaded();
                 }
 
-                auto promise = std::make_shared<std::promise<void>>();
-                auto future = promise->get_future();
-                auto flag = alive;
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (*flag) {
-                        controller->unloadPlugin();
-                    }
-                    promise->set_value();
-                });
+                auto future = dispatcher.dispatch(
+                    [controller]() { controller->unloadPlugin(); });
 
                 if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
                     return handleTimeout("Unload plugin");
@@ -176,7 +161,7 @@ struct Controller::MCPServer {
     }
 
     void stop() {
-        *alive = false;
+        dispatcher.shutdown();
         if (server) {
             server->stop();
         }

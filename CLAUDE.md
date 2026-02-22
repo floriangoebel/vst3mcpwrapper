@@ -46,6 +46,9 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `source/pluginids.h` | FUID definitions for processor and controller |
 | `source/mcp_param_handlers.h` | Extracted MCP parameter tool handlers: `isValidParamId()`, `handleListParameters()`, `handleGetParameter()`, `handleSetParameter()` — testable inline functions used by controller's MCP server |
 | `source/mcp_plugin_handlers.h` | Extracted MCP plugin management tool handlers: `handleGetLoadedPlugin()`, `handleListAvailablePlugins()`, `buildLoadPluginResponse()`, `handleUnloadPluginNotLoaded()`, `handleUnloadPluginSuccess()`, `handleShuttingDown()`, `handleTimeout()` — testable inline functions used by controller's MCP server |
+| `source/dispatcher.h` | Platform-independent thread dispatch abstraction: `MainThreadDispatcher` class with `dispatch<R>()` (returns future), `shutdown()`, `isAlive()`. Template methods in header, platform-specific `postImpl()` in .mm/.cpp |
+| `source/dispatcher_mac.mm` | macOS dispatcher implementation: `postImpl()` uses `dispatch_async(dispatch_get_main_queue())` |
+| `source/dispatcher_linux.cpp` | Linux dispatcher implementation: `postImpl()` uses a dedicated worker thread with condition variable task queue |
 | `source/stateformat.h` | Shared state persistence format: constants (magic, version, max path length) and `writeStateHeader()`/`readStateHeader()` helper functions |
 | `source/version.h` | Plugin version and metadata strings |
 | `source/factory.cpp` | VST3 plugin factory registration (not distributable) |
@@ -56,7 +59,7 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 
 ## Build
 
-macOS only. C++20. CMake 3.25+. Dependencies fetched automatically via FetchContent.
+macOS and Linux. C++20. CMake 3.25+. Dependencies fetched automatically via FetchContent.
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Debug
@@ -148,7 +151,7 @@ Controller::loadPlugin(path)
 ### Threading Safety
 
 - **Audio thread** uses `try_lock` to drain the parameter queue — never blocks
-- **MCP load/unload** use `dispatch_async` + `std::promise/std::future` with a shared `alive` flag and 5-second timeout — prevents deadlock during shutdown (dispatched blocks check `alive` before accessing the controller; handlers time out if the main thread is blocked in `stop()`)
+- **MCP load/unload** use `MainThreadDispatcher` (abstracts `dispatch_async` on macOS / worker thread on Linux) + `std::promise/std::future` with a shared `alive` flag and 5-second timeout — prevents deadlock during shutdown (dispatched blocks check `alive` before accessing the controller; handlers time out if the main thread is blocked in `stop()`)
 - **Processor stores DAW state** — bus arrangements, activation, and processing flags are stored and replayed when loading a plugin mid-session (`wrapperActive_`, `wrapperProcessing_`, `storedInputArr_`/`storedOutputArr_`, `currentSetup_`). Replay happens in both the `notify("LoadPlugin")` path (runtime loading) and the `setState()` path (preset recall, undo).
 - **`hostedActive_`/`hostedProcessing_` are `std::atomic<bool>`** — written on the main/message thread, read on the audio thread in `process()`
 - **`setProcessing` forwarding** — the wrapper overrides `setProcessing()` to forward to the hosted processor. This is critical: `AudioEffect::setProcessing()` is a no-op (`kNotImplemented`), so without forwarding, hosted plugins never get told to start processing.

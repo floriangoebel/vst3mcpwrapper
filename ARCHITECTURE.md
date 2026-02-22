@@ -78,8 +78,8 @@ Four thread contexts exist:
 │  • Tool handlers for list/get/set parameters        │
 │  • Reads hosted controller state (IPtr copy under   │
 │    mutex — acceptable, MCP is not real-time)         │
-│  • Plugin load/unload dispatched to main thread     │
-│    via dispatch_async + promise/future               │
+│  • Plugin load/unload dispatched via                 │
+│    MainThreadDispatcher + promise/future             │
 └─────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────┐
 │ DAW Message Thread (IMessage delivery)              │
@@ -92,8 +92,8 @@ Four thread contexts exist:
 
 1. **Audio thread never blocks.** No mutexes, no allocation, no syscalls. Parameter queue uses `try_lock` — if the lock is held by a producer, changes arrive next buffer (~1-5ms later).
 2. **Main thread owns all VST3 lifecycle.** Plugin loading, component creation/destruction, view management — all on main thread.
-3. **MCP thread reads, main thread writes.** The MCP thread reads parameter state from the hosted controller (thread-safe via `IPtr` copy under mutex). Any mutation (load/unload) is dispatched to the main thread via `dispatch_async` + `std::promise/std::future`. Dispatched blocks check a shared `alive` flag before accessing the controller — preventing use-after-free during shutdown.
-4. **Shutdown is safe.** A shared `alive` flag (`std::shared_ptr<std::atomic<bool>>`) is set to `false` before `server->stop()`, so dispatched GCD blocks bail out instead of accessing the dying controller. In-flight MCP handlers use `wait_for` with a 5-second timeout, preventing deadlock if the main thread is blocked in `stop()`. After the server thread exits, teardown proceeds.
+3. **MCP thread reads, main thread writes.** The MCP thread reads parameter state from the hosted controller (thread-safe via `IPtr` copy under mutex). Any mutation (load/unload) is dispatched via `MainThreadDispatcher` + `std::promise/std::future`. On macOS, the dispatcher uses `dispatch_async(dispatch_get_main_queue())`; on Linux, it uses a dedicated worker thread with a condition variable. Dispatched tasks check a shared `alive` flag before accessing the controller — preventing use-after-free during shutdown.
+4. **Shutdown is safe.** `MainThreadDispatcher::shutdown()` sets the alive flag (`std::shared_ptr<std::atomic<bool>>`) to `false` before `server->stop()`, so dispatched tasks bail out instead of accessing the dying controller. In-flight MCP handlers use `wait_for` with a 5-second timeout, preventing deadlock if the dispatch thread is blocked. After the server thread exits, teardown proceeds.
 
 ### Parameter Change Flow
 
@@ -112,10 +112,10 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 ```
 Controller::terminate()       [main thread]
   │
-  ├── 1. *alive = false                       ← signals dispatched blocks to bail out
+  ├── 1. dispatcher.shutdown()                ← sets alive=false, signals dispatched tasks to bail out
   ├── 2. mcpServer_->server->stop()           ← stops accepting requests, waits for workers
-  │       └── in-flight handlers time out     ← wait_for(5s) prevents deadlock with main thread
-  │           dispatched blocks check alive      and skip controller access if shutting down
+  │       └── in-flight handlers time out     ← wait_for(5s) prevents deadlock with dispatch thread
+  │           dispatched tasks check alive       and skip controller access if shutting down
   ├── 3. mcpServer_->serverThread.join()      ← waits for server thread exit
   ├── 4. teardownHostedController()
   └── 5. EditController::terminate()

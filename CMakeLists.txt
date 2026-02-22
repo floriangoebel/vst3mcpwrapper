@@ -42,6 +42,7 @@ FetchContent_MakeAvailable(cpp_mcp)
 smtg_add_vst3plugin(VST3MCPWrapper
     source/pluginids.h
     source/stateformat.h
+    source/dispatcher.h
     source/version.h
     source/hostedplugin.h
     source/hostedplugin.cpp
@@ -60,18 +61,24 @@ if(APPLE)
     )
 endif()
 
-# Add platform-specific module loading for hosting
+# Add platform-specific module loading and dispatch
 if(APPLE)
     target_sources(VST3MCPWrapper PRIVATE
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm
         source/wrapperview.mm
+        source/dispatcher_mac.mm
     )
     set_source_files_properties(
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm
         source/wrapperview.mm
+        source/dispatcher_mac.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
     target_link_libraries(VST3MCPWrapper PRIVATE "-framework Foundation" "-framework CoreFoundation" "-framework AppKit")
+else()
+    target_sources(VST3MCPWrapper PRIVATE
+        source/dispatcher_linux.cpp
+    )
 endif()
 
 target_link_libraries(VST3MCPWrapper
