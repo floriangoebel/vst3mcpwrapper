@@ -14,6 +14,7 @@ add_executable(VST3MCPWrapper_Tests
     test_utf16_conversion.cpp
     test_stateformat.cpp
     test_param_queue.cpp
+    test_hostedplugin.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
 )
 
