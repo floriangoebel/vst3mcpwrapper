@@ -203,6 +203,76 @@ See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi
 - **Single instance only** — singleton architecture, one MCP server on a fixed port
 - **Linux is headless** — no GUI drop zone on Linux (`WrapperPlugView` is a no-op stub that returns `kResultFalse` from `isPlatformTypeSupported`). Plugin loading is MCP-only via `load_plugin` tool. Audio passthrough and all MCP tools work normally. Hosted plugin GUIs are not displayed.
 
+## Ralph (Autonomous Agent Loop)
+
+Ralph is an iterative autonomous coding agent that works through a PRD (Product Requirements Document) one user story at a time. Each iteration picks the highest-priority incomplete story, implements it, runs tests, commits, and updates progress. A shell script loops until all stories pass or max iterations are reached.
+
+### File Layout
+
+| File | Purpose |
+|---|---|
+| `scripts/ralph-workspace/ralph.sh` | Runner script — loops Claude Code or Amp through iterations |
+| `scripts/ralph-workspace/CLAUDE.md` | Agent prompt — instructions fed to the agent each iteration |
+| `scripts/ralph-workspace/prd.json` | Current PRD — user stories with acceptance criteria and pass/fail status |
+| `scripts/ralph-workspace/progress.txt` | Accumulated progress log + Codebase Patterns section at top |
+| `scripts/ralph-workspace/.last-branch` | Tracks the previous PRD's branch name for archive detection |
+| `scripts/ralph-workspace/archive/` | Archived PRDs and progress logs from previous runs |
+
+### PRD Format
+
+```json
+{
+  "project": "VST3MCPWrapper",
+  "branchName": "ralph/feature-name",
+  "description": "What this batch of work is about",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Short title",
+      "description": "As a developer, I want...",
+      "acceptanceCriteria": ["Criterion 1", "Criterion 2"],
+      "priority": 1,
+      "passes": false,
+      "notes": "Implementation hints for the agent"
+    }
+  ]
+}
+```
+
+Stories are processed in `priority` order (lowest number first). The agent sets `passes: true` after each story's tests pass.
+
+### Usage
+
+```bash
+# Run with Claude Code (default 10 iterations)
+./scripts/ralph-workspace/ralph.sh --tool claude
+
+# Run with Amp
+./scripts/ralph-workspace/ralph.sh --tool amp
+
+# Custom iteration limit
+./scripts/ralph-workspace/ralph.sh --tool claude 20
+```
+
+The script requires a `scripts/ralph` submodule for the Amp prompt template. Claude Code mode reads from `scripts/ralph-workspace/CLAUDE.md` directly.
+
+### Workflow
+
+1. Write a PRD in `scripts/ralph-workspace/prd.json` with `branchName` set to a `ralph/*` branch
+2. Run `ralph.sh` — it creates the branch, implements stories one per iteration, commits each
+3. When all stories have `passes: true`, the agent outputs `<promise>COMPLETE</promise>` and the loop exits
+4. Review the branch, squash any checkpoint commits, merge to main
+
+### Archive
+
+When the `branchName` in `prd.json` changes between runs, `ralph.sh` automatically archives the previous PRD and progress log to `scripts/ralph-workspace/archive/<date>-<branch>/` and resets `progress.txt` for the new run.
+
+### Progress and Patterns
+
+`progress.txt` serves two purposes:
+- **Codebase Patterns** section at the top — general reusable knowledge consolidated across stories (build commands, mock patterns, SDK quirks). Read by the agent at the start of each iteration.
+- **Per-story entries** appended at the bottom — what was implemented, files changed, learnings for future iterations.
+
 ## Conventions
 
 - **Documentation must stay in sync with code.** Any code change must include corresponding updates to CLAUDE.md, ARCHITECTURE.md, and any other affected documentation. The repository must always be in an internally consistent and correct state — no stale descriptions, no outdated diagrams, no mismatched tool descriptions.
