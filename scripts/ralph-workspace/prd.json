@@ -94,7 +94,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "The replay logic is in processor.cpp after loadHostedPlugin() returns, in the notify('LoadPlugin') handler (around lines 339-356). Tests need to: 1) set wrapper state (call setActive/setProcessing on the wrapper), 2) trigger a load via notify(), 3) verify the mock hosted processor received the correct calls. The ProcessorTestAccess friend class may need new accessors."
     },
     {

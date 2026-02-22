@@ -42,6 +42,8 @@ public:
         return p.storedOutputArr_;
     }
     static const ProcessSetup& currentSetup (const Processor& p) { return p.currentSetup_; }
+
+    static void callReplayDawState (Processor& p) { p.replayDawStateOntoHosted (); }
 };
 
 } // namespace VST3MCPWrapper
@@ -194,4 +196,131 @@ TEST_F (ProcessorLifecycleTest, SetupProcessingStoresSetup)
     EXPECT_EQ (stored.maxSamplesPerBlock, 512);
     EXPECT_EQ (stored.symbolicSampleSize, kSample32);
     EXPECT_EQ (stored.processMode, kRealtime);
+}
+
+//------------------------------------------------------------------------
+// State replay: wrapperActive replays setActive(true) onto hosted component
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, ReplayActivatesHostedWhenWrapperActive)
+{
+    // Simulate DAW having called setActive(true) before plugin was loaded
+    processor_->setActive (true);
+    EXPECT_TRUE (ProcessorTestAccess::wrapperActive (*processor_));
+    EXPECT_FALSE (ProcessorTestAccess::hostedActive (*processor_));
+
+    // Inject mock component (simulating a successful plugin load)
+    MockComponent mockComp;
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+
+    EXPECT_CALL (mockComp, setActive (true)).WillOnce (::testing::Return (kResultOk));
+
+    // Trigger replay
+    ProcessorTestAccess::callReplayDawState (*processor_);
+
+    EXPECT_TRUE (ProcessorTestAccess::hostedActive (*processor_));
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// State replay: wrapperProcessing replays setProcessing(true) onto hosted
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, ReplayStartsProcessingWhenWrapperProcessing)
+{
+    // Simulate DAW having called setProcessing(true) before plugin was loaded
+    processor_->setProcessing (true);
+    EXPECT_TRUE (ProcessorTestAccess::wrapperProcessing (*processor_));
+    EXPECT_FALSE (ProcessorTestAccess::hostedProcessing (*processor_));
+
+    // Inject mock processor (simulating a successful plugin load)
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, setProcessing (true)).WillOnce (::testing::Return (kResultOk));
+
+    ProcessorTestAccess::callReplayDawState (*processor_);
+
+    EXPECT_TRUE (ProcessorTestAccess::hostedProcessing (*processor_));
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// State replay: both active and processing replayed in correct order
+// (setActive before setProcessing)
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, ReplayActivatesBeforeStartsProcessing)
+{
+    // Set both wrapper flags
+    processor_->setActive (true);
+    processor_->setProcessing (true);
+
+    // Inject both mocks
+    MockComponent mockComp;
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    {
+        ::testing::InSequence seq;
+        EXPECT_CALL (mockComp, setActive (true)).WillOnce (::testing::Return (kResultOk));
+        EXPECT_CALL (mockProc, setProcessing (true)).WillOnce (::testing::Return (kResultOk));
+    }
+
+    ProcessorTestAccess::callReplayDawState (*processor_);
+
+    EXPECT_TRUE (ProcessorTestAccess::hostedActive (*processor_));
+    EXPECT_TRUE (ProcessorTestAccess::hostedProcessing (*processor_));
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// State replay: wrapperActive=false does NOT activate hosted component
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, ReplaySkipsActivationWhenWrapperNotActive)
+{
+    // wrapperActive_ is false (default), wrapperProcessing_ is false
+    EXPECT_FALSE (ProcessorTestAccess::wrapperActive (*processor_));
+
+    MockComponent mockComp;
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedComponent (*processor_, &mockComp);
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    // Neither setActive nor setProcessing should be called
+    EXPECT_CALL (mockComp, setActive (::testing::_)).Times (0);
+    EXPECT_CALL (mockProc, setProcessing (::testing::_)).Times (0);
+
+    ProcessorTestAccess::callReplayDawState (*processor_);
+
+    EXPECT_FALSE (ProcessorTestAccess::hostedActive (*processor_));
+    EXPECT_FALSE (ProcessorTestAccess::hostedProcessing (*processor_));
+
+    ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// setBusArrangements forwards to hosted processor when present
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    SpeakerArrangement inputs[] = {SpeakerArr::kStereo};
+    SpeakerArrangement outputs[] = {SpeakerArr::kStereo};
+
+    EXPECT_CALL (mockProc, setBusArrangements (::testing::_, 1, ::testing::_, 1))
+        .WillOnce (::testing::Return (kResultOk));
+
+    processor_->setBusArrangements (inputs, 1, outputs, 1);
+
+    // Also stored for replay
+    EXPECT_EQ (ProcessorTestAccess::storedInputArr (*processor_).size (), 1u);
+    EXPECT_EQ (ProcessorTestAccess::storedOutputArr (*processor_).size (), 1u);
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
 }

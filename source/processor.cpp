@@ -104,6 +104,17 @@ bool Processor::loadHostedPlugin(const std::string& path) {
     return true;
 }
 
+void Processor::replayDawStateOntoHosted() {
+    if (wrapperActive_ && hostedComponent_) {
+        hostedComponent_->setActive(true);
+        hostedActive_ = true;
+    }
+    if (wrapperProcessing_ && hostedProcessor_) {
+        hostedProcessor_->setProcessing(true);
+        hostedProcessing_ = true;
+    }
+}
+
 void Processor::unloadHostedPlugin() {
     processorReady_ = false;
 
@@ -289,14 +300,7 @@ tresult PLUGIN_API Processor::setState(IBStream* state) {
         // while the wrapper is already active (e.g., preset recall, undo).
         // Without this, the hosted plugin is loaded but never activated,
         // causing audio to silently fall through to passthrough.
-        if (wrapperActive_ && hostedComponent_) {
-            hostedComponent_->setActive(true);
-            hostedActive_ = true;
-        }
-        if (wrapperProcessing_ && hostedProcessor_) {
-            hostedProcessor_->setProcessing(true);
-            hostedProcessing_ = true;
-        }
+        replayDawStateOntoHosted();
     }
 
     // Forward remaining state to hosted component
@@ -344,14 +348,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
             // Replay activation and processing state. On first load, these were
             // never set because setActive()/setProcessing() were called by the DAW
             // before any hosted component existed — use wrapper flags to replay.
-            if (wrapperActive_ && hostedComponent_) {
-                hostedComponent_->setActive(true);
-                hostedActive_ = true;
-            }
-            if (wrapperProcessing_ && hostedProcessor_) {
-                hostedProcessor_->setProcessing(true);
-                hostedProcessing_ = true;
-            }
+            replayDawStateOntoHosted();
 
             // Send acknowledgment back to controller
             if (auto msg = owned(allocateMessage())) {
