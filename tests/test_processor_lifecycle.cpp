@@ -1,0 +1,197 @@
+#include <gtest/gtest.h>
+#include <gmock/gmock.h>
+
+#include "processor.h"
+#include "mocks/mock_vst3.h"
+
+#include "pluginterfaces/vst/ivstaudioprocessor.h"
+#include "pluginterfaces/vst/ivstcomponent.h"
+
+using namespace Steinberg;
+using namespace Steinberg::Vst;
+using namespace VST3MCPWrapper;
+using namespace VST3MCPWrapper::Testing;
+
+//------------------------------------------------------------------------
+// Test access helper for Processor private members
+//------------------------------------------------------------------------
+namespace VST3MCPWrapper {
+
+class ProcessorTestAccess {
+public:
+    static bool wrapperActive (const Processor& p) { return p.wrapperActive_; }
+    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_; }
+    static bool hostedActive (const Processor& p) { return p.hostedActive_.load (); }
+    static bool hostedProcessing (const Processor& p) { return p.hostedProcessing_.load (); }
+
+    static void setHostedComponent (Processor& p, IComponent* comp)
+    {
+        p.hostedComponent_ = comp;
+    }
+    static void setHostedProcessor (Processor& p, IAudioProcessor* proc)
+    {
+        p.hostedProcessor_ = proc;
+    }
+
+    static const std::vector<SpeakerArrangement>& storedInputArr (const Processor& p)
+    {
+        return p.storedInputArr_;
+    }
+    static const std::vector<SpeakerArrangement>& storedOutputArr (const Processor& p)
+    {
+        return p.storedOutputArr_;
+    }
+    static const ProcessSetup& currentSetup (const Processor& p) { return p.currentSetup_; }
+};
+
+} // namespace VST3MCPWrapper
+
+//------------------------------------------------------------------------
+// Test fixture
+//------------------------------------------------------------------------
+class ProcessorLifecycleTest : public ::testing::Test {
+protected:
+    void SetUp () override
+    {
+        processor_ = new Processor ();
+        ASSERT_EQ (processor_->initialize (nullptr), kResultOk);
+    }
+
+    void TearDown () override
+    {
+        // Clear any injected mocks before terminate to avoid calling into destroyed objects
+        ProcessorTestAccess::setHostedComponent (*processor_, nullptr);
+        ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+        processor_->terminate ();
+        processor_->release ();
+    }
+
+    Processor* processor_ = nullptr;
+};
+
+//------------------------------------------------------------------------
+// setActive tests
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetActiveTrueStoresState)
+{
+    EXPECT_FALSE (ProcessorTestAccess::wrapperActive (*processor_));
+
+    processor_->setActive (true);
+
+    EXPECT_TRUE (ProcessorTestAccess::wrapperActive (*processor_));
+}
+
+TEST_F (ProcessorLifecycleTest, SetActiveFalseStoresState)
+{
+    processor_->setActive (true);
+    EXPECT_TRUE (ProcessorTestAccess::wrapperActive (*processor_));
+
+    processor_->setActive (false);
+
+    EXPECT_FALSE (ProcessorTestAccess::wrapperActive (*processor_));
+}
+
+//------------------------------------------------------------------------
+// setProcessing tests — storage without hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetProcessingTrueStoresState)
+{
+    EXPECT_FALSE (ProcessorTestAccess::wrapperProcessing (*processor_));
+
+    processor_->setProcessing (true);
+
+    EXPECT_TRUE (ProcessorTestAccess::wrapperProcessing (*processor_));
+}
+
+TEST_F (ProcessorLifecycleTest, SetProcessingFalseStoresState)
+{
+    processor_->setProcessing (true);
+    EXPECT_TRUE (ProcessorTestAccess::wrapperProcessing (*processor_));
+
+    processor_->setProcessing (false);
+
+    EXPECT_FALSE (ProcessorTestAccess::wrapperProcessing (*processor_));
+}
+
+//------------------------------------------------------------------------
+// setProcessing tests — forwarding to hosted processor
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetProcessingTrueForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    EXPECT_CALL (mockProc, setProcessing (true)).WillOnce (::testing::Return (kResultOk));
+
+    processor_->setProcessing (true);
+
+    EXPECT_TRUE (ProcessorTestAccess::wrapperProcessing (*processor_));
+    EXPECT_TRUE (ProcessorTestAccess::hostedProcessing (*processor_));
+
+    // Clear mock before it goes out of scope
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+TEST_F (ProcessorLifecycleTest, SetProcessingFalseForwardsToHostedProcessor)
+{
+    MockAudioProcessor mockProc;
+    ProcessorTestAccess::setHostedProcessor (*processor_, &mockProc);
+
+    {
+        ::testing::InSequence seq;
+        EXPECT_CALL (mockProc, setProcessing (true)).WillOnce (::testing::Return (kResultOk));
+        EXPECT_CALL (mockProc, setProcessing (false)).WillOnce (::testing::Return (kResultOk));
+    }
+
+    processor_->setProcessing (true);
+    processor_->setProcessing (false);
+
+    EXPECT_FALSE (ProcessorTestAccess::wrapperProcessing (*processor_));
+    EXPECT_FALSE (ProcessorTestAccess::hostedProcessing (*processor_));
+
+    ProcessorTestAccess::setHostedProcessor (*processor_, nullptr);
+}
+
+//------------------------------------------------------------------------
+// setBusArrangements stores arrangements for later replay
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetBusArrangementsStoresArrangements)
+{
+    EXPECT_TRUE (ProcessorTestAccess::storedInputArr (*processor_).empty ());
+    EXPECT_TRUE (ProcessorTestAccess::storedOutputArr (*processor_).empty ());
+
+    SpeakerArrangement inputs[] = {SpeakerArr::kStereo};
+    SpeakerArrangement outputs[] = {SpeakerArr::kStereo, SpeakerArr::kMono};
+
+    processor_->setBusArrangements (inputs, 1, outputs, 2);
+
+    auto& storedIn = ProcessorTestAccess::storedInputArr (*processor_);
+    auto& storedOut = ProcessorTestAccess::storedOutputArr (*processor_);
+
+    ASSERT_EQ (storedIn.size (), 1u);
+    EXPECT_EQ (storedIn[0], SpeakerArr::kStereo);
+
+    ASSERT_EQ (storedOut.size (), 2u);
+    EXPECT_EQ (storedOut[0], SpeakerArr::kStereo);
+    EXPECT_EQ (storedOut[1], SpeakerArr::kMono);
+}
+
+//------------------------------------------------------------------------
+// setupProcessing stores the ProcessSetup for later replay
+//------------------------------------------------------------------------
+TEST_F (ProcessorLifecycleTest, SetupProcessingStoresSetup)
+{
+    ProcessSetup setup{};
+    setup.sampleRate = 48000.0;
+    setup.maxSamplesPerBlock = 512;
+    setup.symbolicSampleSize = kSample32;
+    setup.processMode = kRealtime;
+
+    processor_->setupProcessing (setup);
+
+    auto& stored = ProcessorTestAccess::currentSetup (*processor_);
+    EXPECT_DOUBLE_EQ (stored.sampleRate, 48000.0);
+    EXPECT_EQ (stored.maxSamplesPerBlock, 512);
+    EXPECT_EQ (stored.symbolicSampleSize, kSample32);
+    EXPECT_EQ (stored.processMode, kRealtime);
+}

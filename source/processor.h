@@ -10,8 +10,10 @@
 namespace VST3MCPWrapper {
 
 struct ParamChange;
+class ProcessorTestAccess;
 
 class Processor : public Steinberg::Vst::AudioEffect {
+    friend class ProcessorTestAccess;
 public:
     Processor();
 
