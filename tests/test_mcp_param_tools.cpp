@@ -3,6 +3,7 @@
 #include <limits>
 
 #include "mcp_param_handlers.h"
+#include "helpers/test_helpers.h"
 #include "mocks/mock_vst3.h"
 #include "hostedplugin.h"
 
@@ -13,16 +14,6 @@ using namespace Steinberg::Vst;
 using namespace testing;
 
 namespace {
-
-// Helper to fill a TChar array from a char16_t literal
-void fillTChar(TChar* dest, const char16_t* src, size_t maxLen = 128) {
-    size_t i = 0;
-    while (i < maxLen - 1 && src[i] != 0) {
-        dest[i] = src[i];
-        ++i;
-    }
-    dest[i] = 0;
-}
 
 // Helper to create a ParameterInfo with common fields
 ParameterInfo makeParamInfo(ParamID id, const char16_t* title, const char16_t* units,

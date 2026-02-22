@@ -2,51 +2,13 @@
 #include <gmock/gmock.h>
 
 #include "processor.h"
+#include "helpers/processor_test_access.h"
 #include "mocks/mock_vst3.h"
-
-#include "pluginterfaces/vst/ivstaudioprocessor.h"
-#include "pluginterfaces/vst/ivstcomponent.h"
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 using namespace VST3MCPWrapper;
 using namespace VST3MCPWrapper::Testing;
-
-//------------------------------------------------------------------------
-// Test access helper for Processor private members
-//------------------------------------------------------------------------
-namespace VST3MCPWrapper {
-
-class ProcessorTestAccess {
-public:
-    static bool wrapperActive (const Processor& p) { return p.wrapperActive_.load (std::memory_order_relaxed); }
-    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_.load (std::memory_order_relaxed); }
-    static bool hostedActive (const Processor& p) { return p.hostedActive_.load (); }
-    static bool hostedProcessing (const Processor& p) { return p.hostedProcessing_.load (); }
-
-    static void setHostedComponent (Processor& p, IComponent* comp)
-    {
-        p.hostedComponent_ = comp;
-    }
-    static void setHostedProcessor (Processor& p, IAudioProcessor* proc)
-    {
-        p.hostedProcessor_ = proc;
-    }
-
-    static const std::vector<SpeakerArrangement>& storedInputArr (const Processor& p)
-    {
-        return p.storedInputArr_;
-    }
-    static const std::vector<SpeakerArrangement>& storedOutputArr (const Processor& p)
-    {
-        return p.storedOutputArr_;
-    }
-    static const ProcessSetup& currentSetup (const Processor& p) { return p.currentSetup_; }
-
-    static void callReplayDawState (Processor& p) { p.replayDawStateOntoHosted (); }
-};
-
-} // namespace VST3MCPWrapper
 
 //------------------------------------------------------------------------
 // Test fixture

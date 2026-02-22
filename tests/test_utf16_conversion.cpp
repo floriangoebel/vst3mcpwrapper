@@ -1,27 +1,20 @@
 #include <gtest/gtest.h>
 #include "hostedplugin.h"
+#include "helpers/test_helpers.h"
 
 #include "pluginterfaces/vst/vsttypes.h"
 
 using namespace Steinberg::Vst;
+using VST3MCPWrapper::Testing::fillTChar;
 
 namespace VST3MCPWrapper {
-
-// Helper to create a null-terminated TChar array from char16_t initializer list
-template <std::size_t N>
-static void fillTChar(TChar (&dest)[N], const char16_t* src, std::size_t srcLen) {
-    for (std::size_t i = 0; i < srcLen && i < N; ++i)
-        dest[i] = static_cast<TChar>(src[i]);
-    if (srcLen < N)
-        dest[srcLen] = 0;
-}
 
 // --- ASCII characters (code points < 0x80) ---
 
 TEST(Utf16ToUtf8, AsciiCharacters) {
     const char16_t src[] = u"Hello, World!";
     TChar buf[128] = {};
-    fillTChar(buf, src, 13);
+    fillTChar(buf, src);
     EXPECT_EQ(utf16ToUtf8(buf), "Hello, World!");
 }
 
@@ -29,7 +22,7 @@ TEST(Utf16ToUtf8, AsciiAllPrintable) {
     // Test a range of printable ASCII
     const char16_t src[] = u"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     TChar buf[128] = {};
-    fillTChar(buf, src, 62);
+    fillTChar(buf, src);
     EXPECT_EQ(utf16ToUtf8(buf), "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
 }
 

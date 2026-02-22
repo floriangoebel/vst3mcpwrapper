@@ -4,42 +4,13 @@
 #include "processor.h"
 #include "messageids.h"
 #include "hostedplugin.h"
+#include "helpers/processor_test_access.h"
 #include "mocks/mock_vst3.h"
-
-#include "pluginterfaces/vst/ivstaudioprocessor.h"
-#include "pluginterfaces/vst/ivstcomponent.h"
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 using namespace VST3MCPWrapper;
 using namespace VST3MCPWrapper::Testing;
-
-//------------------------------------------------------------------------
-// Test access helper for Processor private members
-//------------------------------------------------------------------------
-namespace VST3MCPWrapper {
-
-class ProcessorTestAccess {
-public:
-    static const std::string& currentPluginPath (const Processor& p)
-    {
-        return p.currentPluginPath_;
-    }
-    static void setHostedComponent (Processor& p, IComponent* comp)
-    {
-        p.hostedComponent_ = comp;
-    }
-    static void setHostedProcessor (Processor& p, IAudioProcessor* proc)
-    {
-        p.hostedProcessor_ = proc;
-    }
-    static bool processorReady (const Processor& p)
-    {
-        return p.processorReady_.load ();
-    }
-};
-
-} // namespace VST3MCPWrapper
 
 //------------------------------------------------------------------------
 // Test fixture

@@ -18,6 +18,7 @@ namespace VST3MCPWrapper {
 
 Processor::Processor() {
     setControllerClass(kControllerUID);
+    drainBuffer_.reserve(256);
 }
 
 tresult PLUGIN_API Processor::initialize(FUnknown* context) {

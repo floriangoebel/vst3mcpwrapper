@@ -32,7 +32,7 @@ GUI performEdit ────┘                           try_lock on drain     
                                                                           ──> hostedProcessor_->process()
 ```
 
-MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to update the GUI immediately. The audio thread uses `try_lock` to drain the queue — it never blocks. The queue is capped at 10,000 entries (`kMaxParamQueueSize`) to prevent unbounded memory growth from a misbehaving client; overflow is logged once per episode.
+MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to update the GUI immediately. The audio thread uses `try_lock` to drain the queue — it never blocks. The drain buffer (`drainBuffer_`) is pre-reserved to 256 entries in the Processor constructor to avoid heap allocation on the first `process()` call. The queue is capped at 10,000 entries (`kMaxParamQueueSize`) to prevent unbounded memory growth from a misbehaving client; overflow is logged once per episode.
 
 ## Source Files
 
@@ -52,11 +52,14 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `source/dispatcher_mac.mm` | macOS dispatcher implementation: `postImpl()` uses `dispatch_async(dispatch_get_main_queue())` |
 | `source/dispatcher_linux.cpp` | Linux dispatcher implementation: `postImpl()` uses a dedicated worker thread with condition variable task queue |
 | `source/stateformat.h` | Shared state persistence format: constants (magic, version, max path length) and `writeStateHeader()`/`readStateHeader()` helper functions. Both validate `numBytesWritten`/`numBytesRead` after each stream operation to detect partial I/O. |
+| `source/logging.h` | Cross-platform logging macros: `WRAPPER_LOG` / `WRAPPER_LOG_ERROR` — uses `os_log` on macOS, `fprintf(stderr)` on Linux. Eliminates repeated `#ifdef __APPLE__` blocks. |
 | `source/version.h` | Plugin version and metadata strings |
 | `source/factory.cpp` | VST3 plugin factory registration (not distributable) |
 | `resource/Info.plist.in` | macOS bundle Info.plist template |
 | `cmake/patch_mcp_version.cmake` | Build-time patch for cpp-mcp protocol version (2024-11-05 → 2025-03-26) |
 | `cmake/validate_bundle_linux.cmake` | CTest validation script — checks Linux VST3 bundle layout (directory structure + ELF shared object) |
+| `tests/helpers/processor_test_access.h` | Shared `ProcessorTestAccess` class — unified friend accessor for all Processor private members, used by all processor test files |
+| `tests/helpers/test_helpers.h` | Shared `fillTChar()` helper — fills `TChar` arrays from `char16_t` literals, used by UTF-16 and MCP param tests |
 | `.mcp.json` | Project MCP server config — connects Claude Code to the running plugin |
 | `.vscode/tasks.json` | VS Code build tasks (Cmd+Shift+B to build) |
 

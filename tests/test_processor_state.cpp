@@ -3,6 +3,7 @@
 
 #include "processor.h"
 #include "stateformat.h"
+#include "helpers/processor_test_access.h"
 
 #include "public.sdk/source/vst/utility/memoryibstream.h"
 
@@ -12,25 +13,6 @@
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 using namespace VST3MCPWrapper;
-
-//------------------------------------------------------------------------
-// Test access helper for Processor private members
-//------------------------------------------------------------------------
-namespace VST3MCPWrapper {
-
-class ProcessorTestAccess {
-public:
-    static const std::string& currentPluginPath (const Processor& p)
-    {
-        return p.currentPluginPath_;
-    }
-    static void setCurrentPluginPath (Processor& p, const std::string& path)
-    {
-        p.currentPluginPath_ = path;
-    }
-};
-
-} // namespace VST3MCPWrapper
 
 //------------------------------------------------------------------------
 // Test fixture

@@ -3,10 +3,9 @@
 
 #include "processor.h"
 #include "hostedplugin.h"
+#include "helpers/processor_test_access.h"
 #include "mocks/mock_vst3.h"
 
-#include "pluginterfaces/vst/ivstaudioprocessor.h"
-#include "pluginterfaces/vst/ivstcomponent.h"
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
 
 #include <cstring>
@@ -16,39 +15,6 @@ using namespace Steinberg;
 using namespace Steinberg::Vst;
 using namespace VST3MCPWrapper;
 using namespace VST3MCPWrapper::Testing;
-
-//------------------------------------------------------------------------
-// Test access helper for Processor private members
-//------------------------------------------------------------------------
-namespace VST3MCPWrapper {
-
-class ProcessorTestAccess {
-public:
-    static bool wrapperActive (const Processor& p) { return p.wrapperActive_.load (std::memory_order_relaxed); }
-    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_.load (std::memory_order_relaxed); }
-    static bool hostedActive (const Processor& p) { return p.hostedActive_.load (); }
-    static bool hostedProcessing (const Processor& p) { return p.hostedProcessing_.load (); }
-    static bool processorReady (const Processor& p) { return p.processorReady_.load (); }
-
-    static void setHostedComponent (Processor& p, IComponent* comp)
-    {
-        p.hostedComponent_ = comp;
-    }
-    static void setHostedProcessor (Processor& p, IAudioProcessor* proc)
-    {
-        p.hostedProcessor_ = proc;
-    }
-    static void setProcessorReady (Processor& p, bool ready)
-    {
-        p.processorReady_ = ready;
-    }
-    static void setHostedActive (Processor& p, bool active)
-    {
-        p.hostedActive_ = active;
-    }
-};
-
-} // namespace VST3MCPWrapper
 
 //------------------------------------------------------------------------
 // Helper: manage audio buffers for ProcessData
