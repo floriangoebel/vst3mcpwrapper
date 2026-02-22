@@ -23,6 +23,7 @@ add_executable(VST3MCPWrapper_Tests
     test_mcp_plugin_tools.cpp
     test_message_routing.cpp
     test_shutdown.cpp
+    test_dispatcher_linux.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
     ${CMAKE_SOURCE_DIR}/source/processor.cpp
 )
