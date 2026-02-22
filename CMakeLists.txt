@@ -114,3 +114,10 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resource/Info.plist.in"
     )
 endif()
+
+# --- Tests ---
+option(BUILD_TESTS "Build unit tests" OFF)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
