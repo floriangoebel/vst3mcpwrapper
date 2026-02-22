@@ -264,7 +264,9 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state) {
 // These are called by the hosted plugin's GUI when the user changes parameters.
 
 tresult PLUGIN_API Controller::beginEdit(ParamID id) {
-    // No-op: we don't track edit gestures
+    if (componentHandler) {
+        return componentHandler->beginEdit(id);
+    }
     return kResultOk;
 }
 
@@ -275,7 +277,9 @@ tresult PLUGIN_API Controller::performEdit(ParamID id, ParamValue valueNormalize
 }
 
 tresult PLUGIN_API Controller::endEdit(ParamID id) {
-    // No-op: we don't track edit gestures
+    if (componentHandler) {
+        return componentHandler->endEdit(id);
+    }
     return kResultOk;
 }
 

@@ -25,8 +25,10 @@ add_executable(VST3MCPWrapper_Tests
     test_dispatcher_linux.cpp
     test_mcp_server_integration.cpp
     test_plugin_scanning.cpp
+    test_controller_componenthandler.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
     ${CMAKE_SOURCE_DIR}/source/processor.cpp
+    ${CMAKE_SOURCE_DIR}/source/controller.cpp
 )
 
 # Platform-specific module loading and dispatch required by hostedplugin.cpp / dispatcher
@@ -47,6 +49,7 @@ else()
     target_sources(VST3MCPWrapper_Tests PRIVATE
         ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_linux.cpp
         ${CMAKE_SOURCE_DIR}/source/dispatcher_linux.cpp
+        ${CMAKE_SOURCE_DIR}/source/wrapperview_linux.cpp
     )
 endif()
 
