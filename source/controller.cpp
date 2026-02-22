@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "hostedplugin.h"
 #include "mcp_param_handlers.h"
+#include "mcp_plugin_handlers.h"
 #include "stateformat.h"
 #include "wrapperview.h"
 
@@ -89,13 +90,7 @@ struct Controller::MCPServer {
         server->register_tool(listPluginsTool,
             [](const mcp::json& params, const std::string& session_id) -> mcp::json {
                 auto paths = VST3::Hosting::Module::getModulePaths();
-                mcp::json pluginList = mcp::json::array();
-                for (const auto& path : paths) {
-                    pluginList.push_back(path);
-                }
-                return {
-                    {"content", {{{"type", "text"}, {"text", pluginList.dump(2)}}}}
-                };
+                return handleListAvailablePlugins(paths);
             });
 
         // --- load_plugin tool ---
@@ -109,10 +104,7 @@ struct Controller::MCPServer {
                 std::string path = params["path"].get<std::string>();
 
                 if (!*alive) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "Plugin is shutting down"}}}},
-                        {"isError", true}
-                    };
+                    return handleShuttingDown();
                 }
 
                 auto promise = std::make_shared<std::promise<std::string>>();
@@ -127,27 +119,11 @@ struct Controller::MCPServer {
                 });
 
                 if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "Load plugin timed out"}}}},
-                        {"isError", true}
-                    };
+                    return handleTimeout("Load plugin");
                 }
                 auto error = future.get();
 
-                if (!error.empty()) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "Failed to load plugin: " + error}}}},
-                        {"isError", true}
-                    };
-                }
-
-                mcp::json result = {
-                    {"status", "loaded"},
-                    {"path", path}
-                };
-                return {
-                    {"content", {{{"type", "text"}, {"text", result.dump(2)}}}}
-                };
+                return buildLoadPluginResponse(path, error);
             });
 
         // --- unload_plugin tool ---
@@ -158,17 +134,11 @@ struct Controller::MCPServer {
         server->register_tool(unloadPluginTool,
             [controller, alive = this->alive](const mcp::json& params, const std::string& session_id) -> mcp::json {
                 if (!*alive) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "Plugin is shutting down"}}}},
-                        {"isError", true}
-                    };
+                    return handleShuttingDown();
                 }
 
                 if (!controller->isPluginLoaded()) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "No plugin is currently loaded"}}}},
-                        {"isError", true}
-                    };
+                    return handleUnloadPluginNotLoaded();
                 }
 
                 auto promise = std::make_shared<std::promise<void>>();
@@ -182,16 +152,11 @@ struct Controller::MCPServer {
                 });
 
                 if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
-                    return {
-                        {"content", {{{"type", "text"}, {"text", "Unload plugin timed out"}}}},
-                        {"isError", true}
-                    };
+                    return handleTimeout("Unload plugin");
                 }
                 future.get();
 
-                return {
-                    {"content", {{{"type", "text"}, {"text", "Plugin unloaded"}}}}
-                };
+                return handleUnloadPluginSuccess();
             });
 
         // --- get_loaded_plugin tool ---
@@ -201,14 +166,7 @@ struct Controller::MCPServer {
 
         server->register_tool(getLoadedTool,
             [controller](const mcp::json& params, const std::string& session_id) -> mcp::json {
-                std::string path = controller->getCurrentPluginPath();
-                mcp::json result = {
-                    {"loaded", !path.empty()},
-                    {"path", path.empty() ? "none" : path}
-                };
-                return {
-                    {"content", {{{"type", "text"}, {"text", result.dump(2)}}}}
-                };
+                return handleGetLoadedPlugin(controller->getCurrentPluginPath());
             });
 
         // Start server in background thread
