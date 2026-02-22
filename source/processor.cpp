@@ -7,6 +7,7 @@
 #include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/vst/ivstmessage.h"
 
+#include <cstdio>
 #include <cstring>
 
 using namespace Steinberg;
@@ -331,6 +332,10 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
         const void* data = nullptr;
         uint32 size = 0;
         if (message->getAttributes()->getBinary("path", data, size) == kResultOk && size > 0) {
+            if (!data) {
+                fprintf(stderr, "VST3MCPWrapper: getBinary returned kResultOk but data is nullptr\n");
+                return kResultOk;
+            }
             std::string path(static_cast<const char*>(data), size);
 
             unloadHostedPlugin();
