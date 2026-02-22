@@ -111,6 +111,39 @@ TEST_F(ParamQueueTest, ConcurrentPushesNoDataLoss) {
     EXPECT_EQ(changes.size(), static_cast<size_t>(kNumThreads * kChangesPerThread));
 }
 
+TEST_F(ParamQueueTest, QueueCappedAt10000) {
+    auto& mod = HostedPluginModule::instance();
+
+    for (int i = 0; i < 10001; ++i) {
+        mod.pushParamChange(static_cast<ParamID>(i), static_cast<double>(i) / 10001.0);
+    }
+
+    std::vector<ParamChange> changes;
+    mod.drainParamChanges(changes);
+
+    EXPECT_EQ(changes.size(), 10000u);
+    // Verify first and last entries to confirm ordering
+    EXPECT_EQ(changes[0].id, 0u);
+    EXPECT_EQ(changes[9999].id, 9999u);
+}
+
+TEST_F(ParamQueueTest, PushesBelowCapWork) {
+    auto& mod = HostedPluginModule::instance();
+
+    constexpr int kCount = 100;
+    for (int i = 0; i < kCount; ++i) {
+        mod.pushParamChange(static_cast<ParamID>(i), static_cast<double>(i) / kCount);
+    }
+
+    std::vector<ParamChange> changes;
+    mod.drainParamChanges(changes);
+
+    ASSERT_EQ(changes.size(), static_cast<size_t>(kCount));
+    for (int i = 0; i < kCount; ++i) {
+        EXPECT_EQ(changes[i].id, static_cast<ParamID>(i));
+    }
+}
+
 TEST_F(ParamQueueTest, TryLockSemanticsNonBlocking) {
     auto& mod = HostedPluginModule::instance();
 

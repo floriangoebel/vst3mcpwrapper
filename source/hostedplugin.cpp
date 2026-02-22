@@ -26,6 +26,7 @@ void HostedPluginModule::resetState() {
     {
         std::lock_guard<std::mutex> plock(paramChangeMutex_);
         pendingParamChanges_.clear();
+        paramQueueOverflowWarned_ = false;
     }
 }
 
@@ -112,6 +113,14 @@ IPtr<IComponent> HostedPluginModule::getHostedComponent() const {
 
 void HostedPluginModule::pushParamChange(ParamID id, ParamValue value) {
     std::lock_guard<std::mutex> lock(paramChangeMutex_);
+    if (pendingParamChanges_.size() >= kMaxParamQueueSize) {
+        if (!paramQueueOverflowWarned_) {
+            fprintf(stderr, "VST3MCPWrapper: parameter change queue full (%zu), dropping changes\n",
+                    kMaxParamQueueSize);
+            paramQueueOverflowWarned_ = true;
+        }
+        return;
+    }
     pendingParamChanges_.push_back({id, value});
 }
 
