@@ -221,13 +221,13 @@ Some plugins implement both `IComponent` and `IEditController` on the same class
 |---|---|
 | `list_parameters` | List all parameters with id, title, units, normalizedValue, displayValue, defaultNormalizedValue, stepCount, canAutomate |
 | `get_parameter` | Get parameter by ID. Validates ID exists, returns error if not found. |
-| `set_parameter` | Set parameter by ID + normalized value (0.0-1.0). Validates ID exists. Routes to both GUI and audio. |
+| `set_parameter` | Set parameter by ID + normalized value (0.0-1.0). Validates ID exists and value is finite (rejects NaN/Infinity). Routes to both GUI and audio. |
 | `list_available_plugins` | List all installed VST3 plugins on the system |
 | `load_plugin` | Load by path. Dispatched to main thread, returns success or error. |
 | `unload_plugin` | Unload hosted plugin, return to drop zone |
 | `get_loaded_plugin` | Get current plugin path |
 
-All parameter tools validate that the requested ID exists before acting. Invalid IDs return `isError: true` with a descriptive message.
+All parameter tools validate that the requested ID exists before acting. Invalid IDs return `isError: true` with a descriptive message. `set_parameter` additionally validates that the value is finite (`std::isfinite`) — NaN and Infinity values are rejected with `isError: true`.
 
 ---
 
