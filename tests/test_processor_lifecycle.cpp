@@ -19,8 +19,8 @@ namespace VST3MCPWrapper {
 
 class ProcessorTestAccess {
 public:
-    static bool wrapperActive (const Processor& p) { return p.wrapperActive_; }
-    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_; }
+    static bool wrapperActive (const Processor& p) { return p.wrapperActive_.load (std::memory_order_relaxed); }
+    static bool wrapperProcessing (const Processor& p) { return p.wrapperProcessing_.load (std::memory_order_relaxed); }
     static bool hostedActive (const Processor& p) { return p.hostedActive_.load (); }
     static bool hostedProcessing (const Processor& p) { return p.hostedProcessing_.load (); }
 

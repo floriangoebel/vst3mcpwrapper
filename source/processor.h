@@ -47,8 +47,8 @@ private:
 
     Steinberg::IPtr<Steinberg::Vst::IComponent> hostedComponent_;
     Steinberg::IPtr<Steinberg::Vst::IAudioProcessor> hostedProcessor_;
-    bool wrapperActive_ = false;      // Whether the DAW has activated our processor
-    bool wrapperProcessing_ = false;  // Whether the DAW has called setProcessing(true)
+    std::atomic<bool> wrapperActive_{false};      // Whether the DAW has activated our processor
+    std::atomic<bool> wrapperProcessing_{false};  // Whether the DAW has called setProcessing(true)
     std::atomic<bool> hostedActive_{false};       // Whether the hosted component is active
     std::atomic<bool> hostedProcessing_{false};   // Whether the hosted processor is processing
     std::atomic<bool> processorReady_{false};
