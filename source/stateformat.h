@@ -23,19 +23,23 @@ inline Steinberg::tresult writeStateHeader(Steinberg::IBStream* state, const std
 
     int32 numBytesWritten = 0;
 
-    if (state->write(const_cast<char*>(kStateMagic), sizeof(kStateMagic), &numBytesWritten) != kResultOk)
+    if (state->write(const_cast<char*>(kStateMagic), sizeof(kStateMagic), &numBytesWritten) != kResultOk
+        || numBytesWritten != sizeof(kStateMagic))
         return kResultFalse;
 
     uint32 version = kStateVersion;
-    if (state->write(&version, sizeof(version), &numBytesWritten) != kResultOk)
+    if (state->write(&version, sizeof(version), &numBytesWritten) != kResultOk
+        || numBytesWritten != sizeof(version))
         return kResultFalse;
 
     uint32 pathLen = static_cast<uint32>(pluginPath.size());
-    if (state->write(&pathLen, sizeof(pathLen), &numBytesWritten) != kResultOk)
+    if (state->write(&pathLen, sizeof(pathLen), &numBytesWritten) != kResultOk
+        || numBytesWritten != sizeof(pathLen))
         return kResultFalse;
 
     if (pathLen > 0) {
-        if (state->write(const_cast<char*>(pluginPath.data()), pathLen, &numBytesWritten) != kResultOk)
+        if (state->write(const_cast<char*>(pluginPath.data()), pathLen, &numBytesWritten) != kResultOk
+            || numBytesWritten != static_cast<int32>(pathLen))
             return kResultFalse;
     }
 
