@@ -6,6 +6,7 @@
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace VST3MCPWrapper {
@@ -111,6 +112,13 @@ inline mcp::json handleSetParameter(IEditController* ctrl, ParamID paramId, Para
     if (!isValidParamId(ctrl, paramId)) {
         return {
             {"content", {{{"type", "text"}, {"text", "Parameter ID " + std::to_string(paramId) + " not found"}}}},
+            {"isError", true}
+        };
+    }
+
+    if (!std::isfinite(value)) {
+        return {
+            {"content", {{{"type", "text"}, {"text", "Invalid value: must be a finite number (not NaN or Infinity)"}}}},
             {"isError", true}
         };
     }

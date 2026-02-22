@@ -10,7 +10,6 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 add_executable(VST3MCPWrapper_Tests
-    test_placeholder.cpp
     test_utf16_conversion.cpp
     test_stateformat.cpp
     test_param_queue.cpp
@@ -67,6 +66,11 @@ target_include_directories(VST3MCPWrapper_Tests
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${cpp_mcp_SOURCE_DIR}/include
         ${cpp_mcp_SOURCE_DIR}/common
+)
+
+add_dependencies(VST3MCPWrapper_Tests VST3MCPWrapper)
+target_compile_definitions(VST3MCPWrapper_Tests PRIVATE
+    "TEST_PLUGIN_SO_PATH=\"$<TARGET_FILE:VST3MCPWrapper>\""
 )
 
 include(GoogleTest)

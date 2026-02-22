@@ -127,7 +127,7 @@ Linux VST3 scan paths (from SDK `module_linux.cpp`): `~/.vst3/`, `/usr/lib/vst3/
 
 ## MCP Server
 
-Runs on `127.0.0.1:8771` using SSE transport (cpp-mcp library). The server exposes a `/sse` endpoint for Server-Sent Events and a `/message` endpoint for client POST requests. Started when the controller initializes, stopped on terminate.
+Runs on `127.0.0.1:8771` using SSE transport (cpp-mcp library). The server exposes a `/sse` endpoint for Server-Sent Events and a `/message` endpoint for client POST requests. Started when the controller initializes, stopped on terminate. Server start is wrapped in try-catch — if the port is already in use (or any other error), the failure is logged to stderr and the plugin continues without MCP (audio passthrough still works).
 
 The MCP server is configured as a project-level MCP server in `.mcp.json`, so Claude Code can connect directly to the hosted plugin when it's running in a DAW. The plugin must be loaded in the DAW before the tools become available.
 
@@ -137,13 +137,13 @@ The MCP server is configured as a project-level MCP server in `.mcp.json`, so Cl
 |---|---|
 | `list_parameters` | Lists all hosted plugin parameters (id, title, units, normalizedValue, displayValue, defaultNormalizedValue, stepCount, canAutomate) |
 | `get_parameter` | Get a single parameter's current value by ID. Validates ID exists. |
-| `set_parameter` | Set a parameter's normalized value (0.0–1.0) by ID. Validates ID exists. Updates both GUI and audio processor. |
+| `set_parameter` | Set a parameter's normalized value (0.0–1.0) by ID. Validates ID exists and value is finite (rejects NaN/Infinity). Updates both GUI and audio processor. |
 | `list_available_plugins` | Lists all VST3 plugins installed on the system |
 | `load_plugin` | Load a VST3 plugin by file path. Dispatched via `MainThreadDispatcher` + future. Returns success or error. |
 | `unload_plugin` | Unload the currently hosted plugin and return to the drop zone |
 | `get_loaded_plugin` | Get the currently loaded plugin path |
 
-All parameter tools validate that the requested ID exists before acting. Invalid IDs return `isError: true`.
+All parameter tools validate that the requested ID exists before acting. Invalid IDs return `isError: true`. `set_parameter` additionally validates that the value is finite (`std::isfinite`) — NaN and Infinity values are rejected with `isError: true`.
 
 ## VST3 Hosting Notes
 
@@ -201,7 +201,6 @@ See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi
 ## Known Limitations (MVP)
 
 - **Single instance only** — singleton architecture, one MCP server on a fixed port
-- **No error handling** for MCP server port conflicts
 - **Linux is headless** — no GUI drop zone on Linux (`WrapperPlugView` is a no-op stub that returns `kResultFalse` from `isPlatformTypeSupported`). Plugin loading is MCP-only via `load_plugin` tool. Audio passthrough and all MCP tools work normally. Hosted plugin GUIs are not displayed.
 
 ## Conventions

@@ -195,6 +195,52 @@ TEST(MCPServerIntegration, MultipleToolCalls) {
 }
 
 // ---------------------------------------------------------------------------
+// Test: Binding to an already-in-use port doesn't crash
+// ---------------------------------------------------------------------------
+TEST(MCPServerIntegration, DuplicatePortBindDoesNotCrash) {
+    auto server1 = createTestServer();
+    server1->start(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Verify server1 is running
+    {
+        mcp::sse_client client(kTestURL);
+        ASSERT_TRUE(client.initialize("TestClient", "1.0.0"))
+            << "First server should be running";
+    }
+
+    // Second server on same port — should not crash the process.
+    // Depending on the platform and library, start() may throw, fail silently,
+    // or succeed partially. The key assertion is: no crash, no std::terminate.
+    {
+        auto server2 = createTestServer();
+        bool startedOk = true;
+        try {
+            server2->start(false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        } catch (const std::exception&) {
+            startedOk = false;
+        } catch (...) {
+            startedOk = false;
+        }
+        // Whether it started or failed, stopping should not crash
+        server2->stop();
+
+        // If we reach here, the duplicate bind didn't crash — test passes
+    }
+
+    // Original server should still be functional
+    {
+        mcp::sse_client client(kTestURL);
+        bool initialized = client.initialize("TestClient", "1.0.0");
+        EXPECT_TRUE(initialized)
+            << "First server should still be operational after duplicate bind attempt";
+    }
+
+    server1->stop();
+}
+
+// ---------------------------------------------------------------------------
 // Test: Server responds to ping
 // ---------------------------------------------------------------------------
 TEST(MCPServerIntegration, PingResponds) {

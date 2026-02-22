@@ -184,6 +184,36 @@ TEST_F (MessageRoutingTest, LoadPluginMessageEmptyPathAttribute)
 }
 
 //------------------------------------------------------------------------
+// LoadPlugin message with getBinary returning kResultOk but data=nullptr
+// does not crash (defense-in-depth for malformed IMessage implementations)
+//------------------------------------------------------------------------
+TEST_F (MessageRoutingTest, LoadPluginMessageNullDataPointerNoCrash)
+{
+    MockMessage msg;
+    MockAttributeList attrs;
+
+    const void* nullData = nullptr;
+    uint32 pathSize = 10; // non-zero size but null data pointer
+
+    EXPECT_CALL (msg, getMessageID ())
+        .WillRepeatedly (::testing::Return ("LoadPlugin"));
+    EXPECT_CALL (msg, getAttributes ())
+        .WillRepeatedly (::testing::Return (&attrs));
+    // getBinary returns kResultOk but data pointer is nullptr
+    EXPECT_CALL (attrs, getBinary (::testing::StrEq ("path"), ::testing::_, ::testing::_))
+        .WillOnce (::testing::DoAll (
+            ::testing::SetArgReferee<1> (nullData),
+            ::testing::SetArgReferee<2> (pathSize),
+            ::testing::Return (kResultOk)));
+
+    tresult result = processor_->notify (&msg);
+
+    // Returns kResultOk (entered LoadPlugin branch) but no loading occurred
+    EXPECT_EQ (result, kResultOk);
+    EXPECT_TRUE (ProcessorTestAccess::currentPluginPath (*processor_).empty ());
+}
+
+//------------------------------------------------------------------------
 // Null message returns kResultFalse
 //------------------------------------------------------------------------
 TEST_F (MessageRoutingTest, NullMessageReturnsResultFalse)

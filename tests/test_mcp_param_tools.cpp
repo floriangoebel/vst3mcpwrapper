@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <limits>
 
 #include "mcp_param_handlers.h"
 #include "mocks/mock_vst3.h"
@@ -276,6 +277,72 @@ TEST_F(MCPParamToolsTest, SetParameterClampsValue) {
     HostedPluginModule::instance().drainParamChanges(changes);
     ASSERT_EQ(changes.size(), 1u);
     EXPECT_DOUBLE_EQ(changes[0].value, 1.0);
+}
+
+// ============================================================
+// set_parameter — NaN / Inf rejection
+// ============================================================
+
+TEST_F(MCPParamToolsTest, SetParameterRejectsNaN) {
+    MockEditController mockCtrl;
+
+    ParameterInfo info = makeParamInfo(
+        10, u"Level", u"", 0.5, 0, ParameterInfo::kCanAutomate);
+
+    EXPECT_CALL(mockCtrl, getParameterCount()).WillRepeatedly(Return(1));
+    EXPECT_CALL(mockCtrl, getParameterInfo(0, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(info), Return(kResultOk)));
+
+    auto result = handleSetParameter(&mockCtrl, 10, std::numeric_limits<double>::quiet_NaN());
+    EXPECT_TRUE(result.contains("isError"));
+    EXPECT_TRUE(result["isError"].get<bool>());
+    auto content = result["content"][0]["text"].get<std::string>();
+    EXPECT_NE(content.find("finite"), std::string::npos);
+
+    // Verify nothing was queued
+    std::vector<ParamChange> changes;
+    HostedPluginModule::instance().drainParamChanges(changes);
+    EXPECT_TRUE(changes.empty());
+}
+
+TEST_F(MCPParamToolsTest, SetParameterRejectsPosInf) {
+    MockEditController mockCtrl;
+
+    ParameterInfo info = makeParamInfo(
+        10, u"Level", u"", 0.5, 0, ParameterInfo::kCanAutomate);
+
+    EXPECT_CALL(mockCtrl, getParameterCount()).WillRepeatedly(Return(1));
+    EXPECT_CALL(mockCtrl, getParameterInfo(0, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(info), Return(kResultOk)));
+
+    auto result = handleSetParameter(&mockCtrl, 10, std::numeric_limits<double>::infinity());
+    EXPECT_TRUE(result.contains("isError"));
+    EXPECT_TRUE(result["isError"].get<bool>());
+
+    // Verify nothing was queued
+    std::vector<ParamChange> changes;
+    HostedPluginModule::instance().drainParamChanges(changes);
+    EXPECT_TRUE(changes.empty());
+}
+
+TEST_F(MCPParamToolsTest, SetParameterRejectsNegInf) {
+    MockEditController mockCtrl;
+
+    ParameterInfo info = makeParamInfo(
+        10, u"Level", u"", 0.5, 0, ParameterInfo::kCanAutomate);
+
+    EXPECT_CALL(mockCtrl, getParameterCount()).WillRepeatedly(Return(1));
+    EXPECT_CALL(mockCtrl, getParameterInfo(0, _))
+        .WillRepeatedly(DoAll(SetArgReferee<1>(info), Return(kResultOk)));
+
+    auto result = handleSetParameter(&mockCtrl, 10, -std::numeric_limits<double>::infinity());
+    EXPECT_TRUE(result.contains("isError"));
+    EXPECT_TRUE(result["isError"].get<bool>());
+
+    // Verify nothing was queued
+    std::vector<ParamChange> changes;
+    HostedPluginModule::instance().drainParamChanges(changes);
+    EXPECT_TRUE(changes.empty());
 }
 
 } // anonymous namespace

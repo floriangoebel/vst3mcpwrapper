@@ -1,0 +1,122 @@
+{
+  "project": "VST3MCPWrapper",
+  "branchName": "ralph/linux-platform-support",
+  "description": "Linux Platform Support - Build, test, validate, and harden the VST3 MCP Wrapper plugin on Linux (Ubuntu 24.04)",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Build plugin and test targets on Linux",
+      "description": "As a developer, I want the plugin and test suite to compile on Linux so that I can develop and validate on my Ubuntu system.",
+      "acceptanceCriteria": [
+        "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON configures without errors on Linux",
+        "cmake --build build --target VST3MCPWrapper compiles without errors on Linux",
+        "cmake --build build --target VST3MCPWrapper_Tests compiles without errors on Linux",
+        "No compiler warnings in our source files (source/ and tests/). Warnings from third-party SDK code are acceptable.",
+        "Fix any Linux-specific compilation issues in source files, CMakeLists.txt, or tests/CMakeLists.txt"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "The build was set up in US-015 of the previous PRD but was only verified on macOS. This is the first time building on the actual Linux target (Ubuntu 24.04, GCC, x86_64). Expect potential issues with: cpp-mcp PATCH_COMMAND (shell && chaining may not work identically), VST3 SDK Linux-specific headers, missing system dependencies. If cmake cache exists from a different platform, delete build/ and start fresh."
+    },
+    {
+      "id": "US-002",
+      "title": "Run test suite on Linux and fix all failures",
+      "description": "As a developer, I want all 118 existing tests to pass on Linux so that I have confidence the core logic is platform-independent.",
+      "acceptanceCriteria": [
+        "ctest --test-dir build --output-on-failure runs all tests",
+        "All tests pass (zero failures)",
+        "Fix any platform-specific test failures (e.g., path separators, endianness, type size assumptions)",
+        "If a test is fundamentally macOS-only, gate it with a platform check and document why"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Tests were written and validated on macOS. Potential Linux issues: TChar handling (char16_t vs wchar_t), os_log references in test code, mock ref counting edge cases, ResizableMemoryIBStream behavior. The test target already has if(APPLE)/else() branches for module_linux.cpp and dispatcher_linux.cpp."
+    },
+    {
+      "id": "US-003",
+      "title": "Validate and fix Linux VST3 bundle layout",
+      "description": "As a developer, I want the built .vst3 bundle to follow the correct Linux directory structure so that DAW hosts can scan and load it.",
+      "acceptanceCriteria": [
+        "The built bundle follows the VST3 Linux specification: VST3MCPWrapper.vst3/Contents/x86_64-linux/VST3MCPWrapper.so",
+        "The .so file exists and is a valid ELF shared library (file command confirms)",
+        "If the CMake output structure is wrong, fix CMakeLists.txt to produce the correct layout",
+        "Add a post-build validation step (CMake add_custom_command or ctest test) that checks the bundle structure",
+        "Document the output path in CLAUDE.md if it differs from the macOS path"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "The VST3 SDK CMake macros (smtg_add_vst3plugin) should handle Linux bundle layout automatically, but this hasn't been verified. On macOS the output is build/VST3/Debug/VST3MCPWrapper.vst3 (a macOS bundle). On Linux it should be a directory tree. Standard Linux VST3 scan paths: ~/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/. The VST3 SDK's smtg_target_set_bundle is macOS-only (inside if(APPLE))."
+    },
+    {
+      "id": "US-004",
+      "title": "Add Linux dispatcher unit tests",
+      "description": "As a developer, I want dedicated tests for the Linux worker-thread dispatcher so that I can verify the condition variable task queue works correctly.",
+      "acceptanceCriteria": [
+        "Create tests/test_dispatcher_linux.cpp with Google Test",
+        "Test dispatch() posts a task and returns a future that resolves with the correct value",
+        "Test multiple sequential dispatches execute in order",
+        "Test concurrent dispatches from multiple threads all complete successfully",
+        "Test shutdown() causes isAlive() to return false",
+        "Test dispatch() after shutdown returns the default/shutdown value without hanging",
+        "Test destructor joins the worker thread cleanly (no thread leak)",
+        "All tests pass via ctest on Linux",
+        "Build compiles without errors"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "The Linux dispatcher (source/dispatcher_linux.cpp) uses a worker thread with std::condition_variable and std::queue<std::function<void()>>. The dispatch<R>() template is in dispatcher.h. These tests should exercise the Linux-specific implementation path. On macOS these tests can be skipped or adapted since the macOS dispatcher uses GCD instead."
+    },
+    {
+      "id": "US-005",
+      "title": "Add MCP server integration test",
+      "description": "As a developer, I want a test that starts the MCP server on Linux and verifies it responds to HTTP requests so that I know the full networking stack works.",
+      "acceptanceCriteria": [
+        "Create tests/test_mcp_server_integration.cpp with Google Test",
+        "Test starts an mcp::server on localhost with a known port (e.g., 18771 to avoid conflicts)",
+        "Test registers a simple tool and verifies it can be called via HTTP POST to /message",
+        "Test verifies the /sse endpoint accepts connections",
+        "Test stops the server cleanly without hanging or crashing",
+        "Test verifies the server port is released after stop (can rebind)",
+        "All tests pass via ctest on Linux",
+        "Build compiles without errors"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "cpp-mcp uses httplib internally. This test doesn't need any VST3 dependencies — it just tests that the MCP server library works on Linux. Use httplib::Client (available from cpp-mcp includes) for making test requests. The server should start and stop within the test, no background process needed. Use a high port number to avoid permission issues and conflicts."
+    },
+    {
+      "id": "US-006",
+      "title": "Verify plugin scanning returns Linux VST3 paths",
+      "description": "As a developer, I want to verify that list_available_plugins scans the correct Linux directories so that users can discover installed VST3 plugins.",
+      "acceptanceCriteria": [
+        "Create tests/test_plugin_scanning.cpp with Google Test",
+        "Test calls VST3::Hosting::Module::getModulePaths() and verifies it returns without crashing",
+        "Test verifies the function scans standard Linux paths: ~/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/",
+        "If the SDK's module_linux.cpp doesn't scan expected paths, document the actual behavior",
+        "Test that the handleListAvailablePlugins() MCP handler correctly wraps the scan results",
+        "All tests pass via ctest on Linux",
+        "Build compiles without errors"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "VST3::Hosting::Module::getModulePaths() is implemented in module_linux.cpp from the SDK. It should enumerate .vst3 bundles from standard Linux paths. The test machine may not have any VST3 plugins installed — that's fine, the test verifies the scanning doesn't crash and returns a valid (possibly empty) vector. Check the SDK source to understand which paths are scanned."
+    },
+    {
+      "id": "US-007",
+      "title": "Update documentation for Linux platform",
+      "description": "As a developer, I want CLAUDE.md and ARCHITECTURE.md to accurately reflect Linux support so that documentation stays in sync with the code.",
+      "acceptanceCriteria": [
+        "CLAUDE.md Build section includes Linux-specific prerequisites (build-essential, cmake, etc.)",
+        "CLAUDE.md Build section documents the Linux output bundle path",
+        "CLAUDE.md Known Limitations section documents Linux headless mode (no GUI drop zone)",
+        "CLAUDE.md documents Linux VST3 scan paths and how to install the plugin for DAW scanning",
+        "ARCHITECTURE.md Platform Support section is updated with Linux runtime behavior",
+        "All documentation is accurate and internally consistent with the current codebase",
+        "No stale macOS-only descriptions that imply macOS is the only platform"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "The convention is: documentation must stay in sync with code. Previous US-015 added some Linux notes but they were written from macOS without verifying on Linux. Now that we're actually on Linux, update docs with verified information. Include: Linux build prerequisites, build commands, output paths, DAW setup (symlink to ~/.vst3/), and known working DAWs on Linux (Bitwig, REAPER, Ardour)."
+    }
+  ]
+}
