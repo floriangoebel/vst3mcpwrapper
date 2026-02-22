@@ -3,8 +3,9 @@
 #include "public.sdk/source/vst/hosting/module.h"
 #include "pluginterfaces/vst/ivstcomponent.h"
 
-#include <string>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace VST3MCPWrapper {

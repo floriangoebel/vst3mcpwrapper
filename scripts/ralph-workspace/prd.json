@@ -1,416 +1,122 @@
 {
   "project": "VST3MCPWrapper",
-  "branchName": "ralph/testing-and-multi-instance",
-  "description": "Testing Infrastructure & Multi-Instance Support - Establish comprehensive test coverage, add Linux support, and evolve from singleton to multi-instance architecture",
+  "branchName": "ralph/linux-platform-support",
+  "description": "Linux Platform Support - Build, test, validate, and harden the VST3 MCP Wrapper plugin on Linux (Ubuntu 24.04)",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Set up test framework and CMake integration",
-      "description": "As a developer, I want a test target in CMake so that I can write and run unit tests with ctest.",
+      "title": "Build plugin and test targets on Linux",
+      "description": "As a developer, I want the plugin and test suite to compile on Linux so that I can develop and validate on my Ubuntu system.",
       "acceptanceCriteria": [
-        "Google Test added via FetchContent in tests/CMakeLists.txt",
-        "Top-level CMakeLists.txt has option(BUILD_TESTS) gating add_subdirectory(tests)",
-        "VST3MCPWrapper_Tests executable target created with a single placeholder test",
-        "Test target links against sdk, sdk_hosting, gtest, gmock",
-        "cmake --build build --target VST3MCPWrapper_Tests compiles without errors",
-        "ctest --test-dir build --output-on-failure runs and reports 1 passing test",
-        "Build compiles without errors"
+        "cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON configures without errors on Linux",
+        "cmake --build build --target VST3MCPWrapper compiles without errors on Linux",
+        "cmake --build build --target VST3MCPWrapper_Tests compiles without errors on Linux",
+        "No compiler warnings in our source files (source/ and tests/). Warnings from third-party SDK code are acceptable.",
+        "Fix any Linux-specific compilation issues in source files, CMakeLists.txt, or tests/CMakeLists.txt"
       ],
       "priority": 1,
       "passes": true,
-      "notes": ""
+      "notes": "The build was set up in US-015 of the previous PRD but was only verified on macOS. This is the first time building on the actual Linux target (Ubuntu 24.04, GCC, x86_64). Expect potential issues with: cpp-mcp PATCH_COMMAND (shell && chaining may not work identically), VST3 SDK Linux-specific headers, missing system dependencies. If cmake cache exists from a different platform, delete build/ and start fresh."
     },
     {
       "id": "US-002",
-      "title": "Test UTF-16 to UTF-8 conversion",
-      "description": "As a developer, I want tests for utf16ToUtf8() so that parameter names and units display correctly for all languages.",
+      "title": "Run test suite on Linux and fix all failures",
+      "description": "As a developer, I want all 118 existing tests to pass on Linux so that I have confidence the core logic is platform-independent.",
       "acceptanceCriteria": [
-        "Create tests/test_utf16_conversion.cpp with Google Test",
-        "Test ASCII characters (code points < 0x80) convert correctly",
-        "Test 2-byte UTF-8 sequences (code points 0x80-0x7FF, e.g. accented chars like u00E9)",
-        "Test 3-byte UTF-8 sequences (code points 0x800+, e.g. CJK characters)",
-        "Test null termination handling",
-        "Test max length boundary (128 chars from VST3 String128)",
-        "Test empty string input returns empty string",
-        "All tests pass via ctest",
-        "Build compiles without errors"
+        "ctest --test-dir build --output-on-failure runs all tests",
+        "All tests pass (zero failures)",
+        "Fix any platform-specific test failures (e.g., path separators, endianness, type size assumptions)",
+        "If a test is fundamentally macOS-only, gate it with a platform check and document why"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "utf16ToUtf8() is defined in source/hostedplugin.h. It takes a Steinberg::Vst::TChar* (which is char16_t on most platforms) and returns std::string."
+      "passes": false,
+      "notes": "Tests were written and validated on macOS. Potential Linux issues: TChar handling (char16_t vs wchar_t), os_log references in test code, mock ref counting edge cases, ResizableMemoryIBStream behavior. The test target already has if(APPLE)/else() branches for module_linux.cpp and dispatcher_linux.cpp."
     },
     {
       "id": "US-003",
-      "title": "Test state format serialization",
-      "description": "As a developer, I want tests for the wrapper state format so that preset recall, undo, and session restore work reliably.",
+      "title": "Validate and fix Linux VST3 bundle layout",
+      "description": "As a developer, I want the built .vst3 bundle to follow the correct Linux directory structure so that DAW hosts can scan and load it.",
       "acceptanceCriteria": [
-        "Create tests/test_stateformat.cpp with Google Test",
-        "Test round-trip: write state header (magic VMCW, version 1, path) then read it back - path matches",
-        "Test round-trip with empty path (no plugin loaded)",
-        "Test invalid magic bytes (not VMCW) are rejected",
-        "Test unsupported version number (e.g. version 99) is rejected",
-        "Test path length exceeding 4096 bytes is rejected",
-        "Test truncated stream (fewer bytes than header declares) is handled gracefully",
-        "Test state with additional data appended after the path (simulating hosted component state)",
-        "All tests pass via ctest",
-        "Build compiles without errors"
+        "The built bundle follows the VST3 Linux specification: VST3MCPWrapper.vst3/Contents/x86_64-linux/VST3MCPWrapper.so",
+        "The .so file exists and is a valid ELF shared library (file command confirms)",
+        "If the CMake output structure is wrong, fix CMakeLists.txt to produce the correct layout",
+        "Add a post-build validation step (CMake add_custom_command or ctest test) that checks the bundle structure",
+        "Document the output path in CLAUDE.md if it differs from the macOS path"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "State format constants are in source/stateformat.h. Serialization/deserialization logic is in Processor::setState/getState in source/processor.cpp. Consider extracting helper functions for testability if needed."
+      "passes": false,
+      "notes": "The VST3 SDK CMake macros (smtg_add_vst3plugin) should handle Linux bundle layout automatically, but this hasn't been verified. On macOS the output is build/VST3/Debug/VST3MCPWrapper.vst3 (a macOS bundle). On Linux it should be a directory tree. Standard Linux VST3 scan paths: ~/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/. The VST3 SDK's smtg_target_set_bundle is macOS-only (inside if(APPLE))."
     },
     {
       "id": "US-004",
-      "title": "Test parameter change queue",
-      "description": "As a developer, I want tests for pushParamChange() and drainParamChanges() so that parameter changes from MCP and GUI reach the audio processor correctly.",
+      "title": "Add Linux dispatcher unit tests",
+      "description": "As a developer, I want dedicated tests for the Linux worker-thread dispatcher so that I can verify the condition variable task queue works correctly.",
       "acceptanceCriteria": [
-        "Create tests/test_param_queue.cpp with Google Test",
-        "Test single push then drain returns the change with correct ParamID and value",
-        "Test multiple pushes then drain returns all changes in order",
-        "Test drain clears the queue (second drain returns empty vector)",
-        "Test concurrent pushes from 4+ threads with 1000+ changes each - no data loss",
-        "Test try_lock semantics: verify drain does not block when another thread holds the mutex",
-        "All tests pass via ctest",
+        "Create tests/test_dispatcher_linux.cpp with Google Test",
+        "Test dispatch() posts a task and returns a future that resolves with the correct value",
+        "Test multiple sequential dispatches execute in order",
+        "Test concurrent dispatches from multiple threads all complete successfully",
+        "Test shutdown() causes isAlive() to return false",
+        "Test dispatch() after shutdown returns the default/shutdown value without hanging",
+        "Test destructor joins the worker thread cleanly (no thread leak)",
+        "All tests pass via ctest on Linux",
         "Build compiles without errors"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "pushParamChange() and drainParamChanges() are on HostedPluginModule in source/hostedplugin.h/cpp. The queue uses std::mutex with try_lock on drain (audio thread side). ParamChange is a struct with ParamID id and ParamValue value."
+      "passes": false,
+      "notes": "The Linux dispatcher (source/dispatcher_linux.cpp) uses a worker thread with std::condition_variable and std::queue<std::function<void()>>. The dispatch<R>() template is in dispatcher.h. These tests should exercise the Linux-specific implementation path. On macOS these tests can be skipped or adapted since the macOS dispatcher uses GCD instead."
     },
     {
       "id": "US-005",
-      "title": "Test HostedPluginModule state management",
-      "description": "As a developer, I want tests for HostedPluginModule load/unload state tracking so that plugin lifecycle transitions are correct.",
+      "title": "Add MCP server integration test",
+      "description": "As a developer, I want a test that starts the MCP server on Linux and verifies it responds to HTTP requests so that I know the full networking stack works.",
       "acceptanceCriteria": [
-        "Create tests/test_hostedplugin.cpp with Google Test",
-        "Test isLoaded() returns false on fresh singleton",
-        "Test load() with an invalid/nonexistent path returns false with non-empty error string",
-        "Test after failed load(), isLoaded() remains false",
-        "Test getPluginPath() returns empty string when not loaded",
-        "Test setControllerClassID/getControllerClassID/hasControllerClassID round-trip correctly",
-        "Test hasControllerClassID() returns false before any ID is set",
-        "Test setHostedComponent(nullptr) / getHostedComponent() returns nullptr",
-        "Test unload() resets all state (isLoaded false, path empty)",
-        "All tests pass via ctest",
+        "Create tests/test_mcp_server_integration.cpp with Google Test",
+        "Test starts an mcp::server on localhost with a known port (e.g., 18771 to avoid conflicts)",
+        "Test registers a simple tool and verifies it can be called via HTTP POST to /message",
+        "Test verifies the /sse endpoint accepts connections",
+        "Test stops the server cleanly without hanging or crashing",
+        "Test verifies the server port is released after stop (can rebind)",
+        "All tests pass via ctest on Linux",
         "Build compiles without errors"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "HostedPluginModule is a singleton accessed via instance(). Testing with real VST3 plugins is not feasible - focus on state management methods. load() with a real plugin requires a .vst3 bundle on disk; test the error path (invalid path) instead. Class IDs use TUID (char[16])."
+      "passes": false,
+      "notes": "cpp-mcp uses httplib internally. This test doesn't need any VST3 dependencies — it just tests that the MCP server library works on Linux. Use httplib::Client (available from cpp-mcp includes) for making test requests. The server should start and stop within the test, no background process needed. Use a high port number to avoid permission issues and conflicts."
     },
     {
       "id": "US-006",
-      "title": "Create VST3 mock interfaces for testing",
-      "description": "As a developer, I want gmock wrappers for VST3 interfaces so that processor and controller tests can run without real plugins.",
+      "title": "Verify plugin scanning returns Linux VST3 paths",
+      "description": "As a developer, I want to verify that list_available_plugins scans the correct Linux directories so that users can discover installed VST3 plugins.",
       "acceptanceCriteria": [
-        "Create tests/mocks/mock_vst3.h with gmock mock classes",
-        "MockComponent implements IComponent with mock methods: initialize, terminate, setActive, setBusArrangements, getBusArrangement, getControllerClassId, setState, getState",
-        "MockAudioProcessor implements IAudioProcessor with mock methods: setupProcessing, setProcessing, process, getLatencySamples, getTailSamples",
-        "MockEditController implements IEditController with mock methods: initialize, terminate, setComponentHandler, getParameterCount, getParameterInfo, getParamNormalized, setParamNormalized, getParamStringByValue",
-        "MockMessage implements IMessage with mock methods: getMessageID, getAttributes",
-        "MockAttributes implements IAttributeList with mock methods: setBinary, getBinary, setInt, getInt",
-        "All mocks handle COM reference counting (addRef/release) correctly - use a simple ref count or NiceMock defaults",
-        "A placeholder test verifies mocks can be instantiated without crashing",
+        "Create tests/test_plugin_scanning.cpp with Google Test",
+        "Test calls VST3::Hosting::Module::getModulePaths() and verifies it returns without crashing",
+        "Test verifies the function scans standard Linux paths: ~/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/",
+        "If the SDK's module_linux.cpp doesn't scan expected paths, document the actual behavior",
+        "Test that the handleListAvailablePlugins() MCP handler correctly wraps the scan results",
+        "All tests pass via ctest on Linux",
         "Build compiles without errors"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "VST3 interfaces are COM-style with addRef/release/queryInterface. Mocks must return kResultOk from queryInterface for their own IID. Use MOCK_METHOD for all methods. IPtr<> will call addRef/release so mocks need working ref counting. Include pluginterfaces/vst/ivstaudioprocessor.h, ivstcomponent.h, ivsteditcontroller.h, ivstmessage.h."
+      "passes": false,
+      "notes": "VST3::Hosting::Module::getModulePaths() is implemented in module_linux.cpp from the SDK. It should enumerate .vst3 bundles from standard Linux paths. The test machine may not have any VST3 plugins installed — that's fine, the test verifies the scanning doesn't crash and returns a valid (possibly empty) vector. Check the SDK source to understand which paths are scanned."
     },
     {
       "id": "US-007",
-      "title": "Test processor lifecycle state tracking",
-      "description": "As a developer, I want tests for the processor's DAW state tracking so that plugin loading mid-session replays the correct activation and processing state.",
+      "title": "Update documentation for Linux platform",
+      "description": "As a developer, I want CLAUDE.md and ARCHITECTURE.md to accurately reflect Linux support so that documentation stays in sync with the code.",
       "acceptanceCriteria": [
-        "Create tests/test_processor_lifecycle.cpp with Google Test",
-        "Test setActive(true) stores wrapperActive_ = true",
-        "Test setActive(false) stores wrapperActive_ = false",
-        "Test setProcessing(true) stores wrapperProcessing_ = true and forwards to hosted processor if loaded",
-        "Test setProcessing(false) stores wrapperProcessing_ = false and forwards to hosted processor if loaded",
-        "Test setBusArrangements() stores speaker arrangements for later replay",
-        "Test setupProcessing() stores the ProcessSetup for later replay",
-        "All tests pass via ctest",
-        "Build compiles without errors"
+        "CLAUDE.md Build section includes Linux-specific prerequisites (build-essential, cmake, etc.)",
+        "CLAUDE.md Build section documents the Linux output bundle path",
+        "CLAUDE.md Known Limitations section documents Linux headless mode (no GUI drop zone)",
+        "CLAUDE.md documents Linux VST3 scan paths and how to install the plugin for DAW scanning",
+        "ARCHITECTURE.md Platform Support section is updated with Linux runtime behavior",
+        "All documentation is accurate and internally consistent with the current codebase",
+        "No stale macOS-only descriptions that imply macOS is the only platform"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "Processor is in source/processor.h/cpp. It extends AudioEffect. To test, instantiate the Processor directly and call lifecycle methods. Use the mock interfaces from US-006 where needed. The processor accesses HostedPluginModule::instance() for the singleton."
-    },
-    {
-      "id": "US-008",
-      "title": "Test processor audio passthrough",
-      "description": "As a developer, I want tests for process() audio forwarding so that audio passes through transparently when no plugin is loaded.",
-      "acceptanceCriteria": [
-        "Create tests/test_processor_process.cpp with Google Test",
-        "Test with no hosted plugin: 32-bit float input audio is copied to output buffers unchanged",
-        "Test with no hosted plugin: 64-bit double input audio is copied to output buffers unchanged",
-        "Test channel count mismatch: extra output channels are zeroed",
-        "Test with empty input (numSamples = 0): no crash, output unchanged",
-        "Test parameter changes from the queue are injected into ProcessData::inputParameterChanges",
-        "All tests pass via ctest",
-        "Build compiles without errors"
-      ],
-      "priority": 8,
-      "passes": true,
-      "notes": "Create test ProcessData structures with sample buffers. Use ParameterChanges/ParameterValueQueue from sdk_hosting as concrete implementations. The process() method checks processorReady_ flag and symbolicSampleSize for 32/64-bit handling."
-    },
-    {
-      "id": "US-009",
-      "title": "Test processor state persistence (setState/getState)",
-      "description": "As a developer, I want tests for Processor::setState() and getState() so that DAW session save/restore and undo work correctly.",
-      "acceptanceCriteria": [
-        "Create tests/test_processor_state.cpp with Google Test",
-        "Test getState() writes valid wrapper state format header (magic VMCW, version 1)",
-        "Test getState() includes the loaded plugin path in the state",
-        "Test getState() with no plugin loaded writes state with empty path",
-        "Test setState() with corrupted data (bad magic) returns kResultFalse",
-        "Test setState() with corrupted data (bad version) returns kResultFalse",
-        "Test setState/getState round-trip preserves the plugin path",
-        "All tests pass via ctest",
-        "Build compiles without errors"
-      ],
-      "priority": 9,
-      "passes": true,
-      "notes": "Use IBStream implementations for test I/O. The processor writes/reads state using the format from stateformat.h. setState triggers loadHostedPlugin if a path is present."
-    },
-    {
-      "id": "US-010",
-      "title": "Test MCP parameter tools (list, get, set)",
-      "description": "As a developer, I want tests for the MCP parameter tool handlers so that agents can reliably read and write plugin parameters.",
-      "acceptanceCriteria": [
-        "Create tests/test_mcp_param_tools.cpp with Google Test",
-        "Test list_parameters returns JSON array with fields: id, title, units, normalizedValue, displayValue, defaultNormalizedValue, stepCount, canAutomate",
-        "Test get_parameter with valid ID returns correct value and metadata",
-        "Test get_parameter with invalid ID returns isError: true with descriptive message",
-        "Test set_parameter with valid ID and value 0.0-1.0 updates the parameter",
-        "Test set_parameter with invalid ID returns isError: true",
-        "Test all parameter tools return appropriate error when no plugin is loaded",
-        "All tests pass via ctest",
-        "Build compiles without errors"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": "MCP tool handlers are registered in controller.cpp. They access the hosted IEditController for parameter info/values. Use MockEditController from US-006. The tool handlers use nlohmann/json (from cpp-mcp) for JSON responses."
-    },
-    {
-      "id": "US-011",
-      "title": "Test MCP plugin management tools",
-      "description": "As a developer, I want tests for load_plugin, unload_plugin, get_loaded_plugin, and list_available_plugins MCP tools.",
-      "acceptanceCriteria": [
-        "Create tests/test_mcp_plugin_tools.cpp with Google Test",
-        "Test get_loaded_plugin returns plugin path when a plugin is loaded",
-        "Test get_loaded_plugin returns appropriate response when no plugin is loaded",
-        "Test load_plugin with invalid path returns isError: true with descriptive message",
-        "Test unload_plugin when no plugin loaded returns appropriate response",
-        "Test list_available_plugins returns a JSON array (may be empty in test environment)",
-        "All tests pass via ctest",
-        "Build compiles without errors"
-      ],
-      "priority": 11,
-      "passes": true,
-      "notes": "load_plugin uses dispatch_async + promise/future for main thread dispatch. In tests, this may need to be simplified or the dispatch mechanism mocked. list_available_plugins calls Module::getModulePaths() which enumerates real VST3 plugins on disk."
-    },
-    {
-      "id": "US-012",
-      "title": "Test message routing (IMessage notify)",
-      "description": "As a developer, I want tests for the processor's notify() handler so that controller-to-processor messages correctly trigger plugin loading.",
-      "acceptanceCriteria": [
-        "Create tests/test_message_routing.cpp with Google Test",
-        "Test LoadPlugin message with valid path attribute extracts the path correctly",
-        "Test unrecognized message IDs are ignored (no crash, returns kResultFalse)",
-        "Test message with missing path attribute is handled gracefully (no crash)",
-        "Test message with empty path attribute is handled gracefully",
-        "All tests pass via ctest",
-        "Build compiles without errors"
-      ],
-      "priority": 12,
-      "passes": true,
-      "notes": "Use MockMessage and MockAttributes from US-006. The notify() handler checks message ID string, extracts binary path from attributes, then calls loadHostedPlugin(). After loading, it sends a PluginLoaded acknowledgment."
-    },
-    {
-      "id": "US-013",
-      "title": "Test shutdown safety and alive flag",
-      "description": "As a developer, I want tests for the shutdown sequence so that termination never deadlocks or crashes.",
-      "acceptanceCriteria": [
-        "Create tests/test_shutdown.cpp with Google Test",
-        "Test setting alive flag to false causes subsequent checks to return false",
-        "Test alive flag is atomic and thread-safe (concurrent reads while writing)",
-        "Test promise/future with wait_for(5s) times out correctly when promise is never fulfilled",
-        "Test shutdown sequence completes within bounded time (e.g. 10 seconds max)",
-        "All tests pass via ctest",
-        "Build compiles without errors"
-      ],
-      "priority": 13,
-      "passes": true,
-      "notes": "The alive flag is shared_ptr<atomic<bool>>. Shutdown sets it to false before stopping the MCP server. Dispatched GCD blocks check alive before accessing the controller. Test the flag mechanics and timeout behavior independently from the full server."
-    },
-    {
-      "id": "US-014",
-      "title": "Abstract GCD dispatch_async to platform-independent mechanism",
-      "description": "As a developer, I want a platform-independent thread dispatch mechanism so that the plugin can work on both macOS and Linux.",
-      "acceptanceCriteria": [
-        "Create a MainThreadDispatcher abstraction (class or function) in source/ that wraps dispatch-to-main-thread semantics",
-        "On macOS: implementation uses dispatch_async(dispatch_get_main_queue())",
-        "On Linux: implementation uses std::thread + condition variable or similar mechanism",
-        "Controller's MCP load/unload handlers use the new abstraction instead of raw dispatch_async",
-        "The abstraction supports the alive flag + timeout pattern (shared_ptr<atomic<bool>>, promise/future with wait_for)",
-        "Existing macOS behavior is unchanged",
-        "Build compiles without errors on macOS",
-        "All existing tests still pass"
-      ],
-      "priority": 14,
-      "passes": true,
-      "notes": "dispatch_async(dispatch_get_main_queue(), ...) is used in controller.cpp for MCP load_plugin and unload_plugin handlers. The replacement must support: (1) posting a callable to run on a specific thread, (2) checking an alive flag before execution, (3) returning results via promise/future with timeout. On Linux there is no main run loop, so a dedicated worker thread is acceptable."
-    },
-    {
-      "id": "US-015",
-      "title": "Add Linux build support",
-      "description": "As a developer, I want the project to build on Linux so that I can develop and test on both macOS and Linux.",
-      "acceptanceCriteria": [
-        "CMakeLists.txt conditionally includes module_mac.mm and macOS frameworks only on APPLE",
-        "CMakeLists.txt includes module_linux.cpp from VST3 SDK on Linux",
-        "wrapperview.mm is excluded on Linux",
-        "A stub IPlugView (NoOpPlugView or similar) is provided on Linux that returns kResultFalse from isPlatformTypeSupported",
-        "macOS-specific #imports (Cocoa, AppKit) are gated behind #ifdef __APPLE__",
-        "LANGUAGES in project() includes OBJCXX only on APPLE (or is always present but .mm files only compiled on APPLE)",
-        "Build compiles without errors on macOS (no regression)",
-        "All existing tests still pass on macOS"
-      ],
-      "priority": 15,
-      "passes": true,
-      "notes": "The VST3 SDK provides source/vst/hosting/module_linux.cpp for plugin module loading on Linux. The NSView-based WrapperPlugView (wrapperview.h/mm) is macOS-only. On Linux, the wrapper can operate headless (MCP-only, no GUI drop zone). The OBJCXX language is needed for .mm files on macOS but may cause issues on Linux if always enabled - use a conditional approach."
-    },
-    {
-      "id": "US-016",
-      "title": "Create HostedPluginInstance class",
-      "description": "As a developer, I want a per-instance state class so that each wrapper instance can hold its own module, factory, param queue, and plugin state independently.",
-      "acceptanceCriteria": [
-        "Create HostedPluginInstance class (in source/hostedplugin.h or new file) with same interface as HostedPluginModule but non-singleton",
-        "HostedPluginInstance holds: Module::Ptr, PluginFactory, plugin path, class IDs, IComponent reference, param queue, instance ID",
-        "Constructor takes an instance ID string",
-        "load(), unload(), isLoaded(), getFactory(), getPluginPath() work identically to HostedPluginModule",
-        "pushParamChange() and drainParamChanges() work identically with their own queue",
-        "HostedPluginModule still exists and works (not yet replaced) to avoid breaking existing code",
-        "Unit tests verify HostedPluginInstance state management (mirror US-004 and US-005 tests)",
-        "Build compiles without errors",
-        "All existing tests still pass"
-      ],
-      "priority": 16,
       "passes": false,
-      "notes": "This is the first step of the multi-instance refactor. Create the new class alongside the existing singleton. Later stories will create the registry and migrate processor/controller to use it."
-    },
-    {
-      "id": "US-017",
-      "title": "Create InstanceRegistry and refactor Processor",
-      "description": "As a developer, I want a static registry mapping instance IDs to HostedPluginInstance objects, and the Processor should use it instead of the singleton.",
-      "acceptanceCriteria": [
-        "Create static InstanceRegistry class with thread-safe map<string, shared_ptr<HostedPluginInstance>>",
-        "InstanceRegistry provides: registerInstance(), removeInstance(), getInstance(), getAllInstances()",
-        "Processor::initialize() generates a unique instance ID, creates a HostedPluginInstance, registers it",
-        "Processor::terminate() removes the instance from the registry",
-        "Processor uses its HostedPluginInstance instead of HostedPluginModule::instance() for all operations",
-        "Processor sends InstanceID message to controller via IMessage in initialize()",
-        "Unit tests verify two Processor instances get different registry entries",
-        "Build compiles without errors",
-        "All existing tests updated and passing"
-      ],
-      "priority": 17,
-      "passes": false,
-      "notes": "Instance ID can be a monotonically incrementing integer converted to string (e.g. instance-1, instance-2). The registry must be thread-safe since multiple instances may register/unregister concurrently. Use std::mutex for the map."
-    },
-    {
-      "id": "US-018",
-      "title": "Refactor Controller to use InstanceRegistry",
-      "description": "As a developer, I want the Controller to look up its HostedPluginInstance via the registry so that it operates on the correct per-instance state.",
-      "acceptanceCriteria": [
-        "Controller::notify() handles InstanceID messages and stores the instance ID",
-        "Controller uses instanceId_ to look up HostedPluginInstance from InstanceRegistry for all operations",
-        "Controller falls back gracefully if InstanceID not yet received (logs warning, does not crash)",
-        "MCP server and tool handlers use the per-instance state (not the singleton)",
-        "loadPlugin(), teardownHostedController(), setupHostedController() use per-instance state",
-        "HostedPluginModule singleton can be removed (or deprecated) since nothing references it",
-        "Build compiles without errors",
-        "All existing tests updated and passing"
-      ],
-      "priority": 18,
-      "passes": false,
-      "notes": "The Controller currently uses HostedPluginModule::instance() throughout. Replace all references with lookups via InstanceRegistry::getInstance(instanceId_). The MCP server is per-controller, so it naturally becomes per-instance."
-    },
-    {
-      "id": "US-019",
-      "title": "Dynamic MCP port allocation",
-      "description": "As a developer, I want each wrapper instance to bind its MCP server to an OS-assigned port so that multiple instances can run simultaneously.",
-      "acceptanceCriteria": [
-        "MCP server binds to port 0 instead of hardcoded 8771",
-        "After binding, the actual assigned port is retrieved and stored in HostedPluginInstance",
-        "The assigned port is logged or accessible for debugging",
-        "Two wrapper instances started concurrently get different ports",
-        "MCP tools work correctly on the dynamically assigned port",
-        "Port is released when the instance's MCP server is stopped in terminate()",
-        "Build compiles without errors",
-        "All existing tests still pass"
-      ],
-      "priority": 19,
-      "passes": false,
-      "notes": "The cpp-mcp library (httplib-based) should support binding to port 0. After binding, use getsockname() or the server's API to retrieve the actual port. The port needs to be discoverable by agents - the discovery file (next story) will handle that."
-    },
-    {
-      "id": "US-020",
-      "title": "Instance discovery file",
-      "description": "As an agent developer, I want a discovery file listing all active wrapper instances so that my agent can find and connect to them.",
-      "acceptanceCriteria": [
-        "Discovery file path: ~/Library/Application Support/VST3MCPWrapper/instances.json (macOS) or ~/.config/VST3MCPWrapper/instances.json (Linux)",
-        "Each entry contains: id, port, pid, pluginPath, pluginName",
-        "File is updated (entry added) when an instance registers with a port",
-        "File is updated (pluginPath/pluginName changed) when a plugin is loaded or unloaded",
-        "Entry is removed when an instance terminates",
-        "Advisory file locking (flock) prevents concurrent write corruption",
-        "Atomic write via temp file + rename prevents partial reads",
-        "Stale entries (PID no longer running) are cleaned up on read",
-        "Unit tests verify file write/read/cleanup operations",
-        "Build compiles without errors"
-      ],
-      "priority": 20,
-      "passes": false,
-      "notes": "flock() is available on both macOS and Linux. Use kill(pid, 0) to check if a PID is alive for stale entry cleanup. Create the directory if it does not exist. The file must be valid JSON at all times."
-    },
-    {
-      "id": "US-021",
-      "title": "State format v2 with instance ID",
-      "description": "As a developer, I want the state format to include the instance ID so that DAW session restore maps instances correctly.",
-      "acceptanceCriteria": [
-        "State format v2: magic VMCW, version 2, instanceIdLen (uint32, max 256), instanceId (UTF-8), pathLen (uint32, max 4096), pluginPath (UTF-8), hosted state",
-        "Processor::getState() writes v2 format including the instance ID",
-        "Processor::setState() reads v2 format and extracts the instance ID",
-        "Processor::setState() still reads v1 format (generates a new instance ID for backward compatibility)",
-        "Update stateformat.h with v2 constants",
-        "Round-trip test: write v2 then read v2 - instance ID and path match",
-        "Backward compatibility test: v1 state loads correctly and gets a new instance ID",
-        "Build compiles without errors",
-        "All tests pass"
-      ],
-      "priority": 21,
-      "passes": false,
-      "notes": "The version field determines which format to parse. v1 has no instance ID field. When loading v1 state, generate a fresh instance ID and register it."
-    },
-    {
-      "id": "US-022",
-      "title": "MCP tool: list_instances",
-      "description": "As an agent developer, I want a list_instances MCP tool so that my agent can discover all active wrapper instances from any instance's MCP server.",
-      "acceptanceCriteria": [
-        "New list_instances tool registered in the MCP server",
-        "Reads the discovery file and returns JSON array of instances",
-        "Each instance entry has: id, port, pluginPath, pluginName",
-        "Stale entries (dead PIDs) are filtered out before returning",
-        "Returns empty array when discovery file does not exist",
-        "Returns empty array when discovery file has no instances",
-        "Unit test verifies list_instances returns correct data",
-        "Build compiles without errors",
-        "All tests pass"
-      ],
-      "priority": 22,
-      "passes": false,
-      "notes": "This tool reads the same discovery file written by US-020. It can be called on any instance's MCP server to discover all instances."
+      "notes": "The convention is: documentation must stay in sync with code. Previous US-015 added some Linux notes but they were written from macOS without verifying on Linux. Now that we're actually on Linux, update docs with verified information. Include: Linux build prerequisites, build commands, output paths, DAW setup (symlink to ~/.vst3/), and known working DAWs on Linux (Bitwig, REAPER, Ardour)."
     }
   ]
 }

@@ -23,8 +23,11 @@ FetchContent_Declare(vst3sdk
 )
 
 set(SMTG_ADD_VSTGUI OFF CACHE BOOL "" FORCE)
+set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
 set(SMTG_ADD_VST3_PLUGINS_SAMPLES OFF CACHE BOOL "" FORCE)
+set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SMTG_ADD_VST3_HOSTING_SAMPLES OFF CACHE BOOL "" FORCE)
+set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SMTG_RUN_VST_VALIDATOR OFF CACHE BOOL "" FORCE)
 set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)
 
@@ -42,6 +45,12 @@ FetchContent_Declare(cpp_mcp
 )
 
 FetchContent_MakeAvailable(cpp_mcp)
+
+# On Linux, the plugin is a shared object (.so) — all static libraries
+# linked into it must be compiled with position-independent code.
+if(NOT APPLE)
+    set_target_properties(mcp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
 # --- Plugin target ---
 smtg_add_vst3plugin(VST3MCPWrapper
