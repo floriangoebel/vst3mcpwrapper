@@ -18,6 +18,7 @@ add_executable(VST3MCPWrapper_Tests
     test_mock_vst3.cpp
     test_processor_lifecycle.cpp
     test_processor_process.cpp
+    test_processor_state.cpp
     ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
     ${CMAKE_SOURCE_DIR}/source/processor.cpp
 )
