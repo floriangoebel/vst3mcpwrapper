@@ -11,7 +11,23 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(VST3MCPWrapper_Tests
     test_placeholder.cpp
+    test_utf16_conversion.cpp
+    ${CMAKE_SOURCE_DIR}/source/hostedplugin.cpp
 )
+
+# Platform-specific module loading required by hostedplugin.cpp
+if(APPLE)
+    target_sources(VST3MCPWrapper_Tests PRIVATE
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm
+    )
+    set_source_files_properties(
+        ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_mac.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc"
+    )
+    target_link_libraries(VST3MCPWrapper_Tests PRIVATE
+        "-framework Foundation" "-framework CoreFoundation" "-framework AppKit"
+    )
+endif()
 
 target_link_libraries(VST3MCPWrapper_Tests
     PRIVATE
