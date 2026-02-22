@@ -399,35 +399,10 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state) {
     if (!state)
         return kResultOk;
 
-    // Try to read wrapper state format to extract plugin path
-    char magic[4] = {};
-    int32 numBytesRead = 0;
-    if (state->read(magic, sizeof(magic), &numBytesRead) != kResultOk || numBytesRead != sizeof(magic))
-        return kResultOk;
-
-    if (std::memcmp(magic, kStateMagic, sizeof(magic)) != 0)
-        return kResultOk;
-
-    uint32 version = 0;
-    if (state->read(&version, sizeof(version), &numBytesRead) != kResultOk
-        || numBytesRead != sizeof(version))
-        return kResultOk;
-
-    uint32 pathLen = 0;
-    if (state->read(&pathLen, sizeof(pathLen), &numBytesRead) != kResultOk
-        || numBytesRead != sizeof(pathLen))
-        return kResultOk;
-
-    if (pathLen > kMaxPathLen)
-        return kResultOk;
-
+    // Read wrapper state header to extract plugin path
     std::string pluginPath;
-    if (pathLen > 0) {
-        pluginPath.resize(pathLen);
-        if (state->read(pluginPath.data(), pathLen, &numBytesRead) != kResultOk
-            || numBytesRead != static_cast<int32>(pathLen))
-            return kResultOk;
-    }
+    if (readStateHeader(state, pluginPath) != kResultOk)
+        return kResultOk; // Non-fatal for controller side
 
     // Load the plugin if needed
     if (!pluginPath.empty() && pluginPath != currentPluginPath_) {

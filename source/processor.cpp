@@ -274,36 +274,10 @@ tresult PLUGIN_API Processor::setState(IBStream* state) {
     if (!state)
         return kResultFalse;
 
-    // Try to read wrapper state format
-    char magic[4] = {};
-    int32 numBytesRead = 0;
-    if (state->read(magic, sizeof(magic), &numBytesRead) != kResultOk || numBytesRead != sizeof(magic))
-        return kResultFalse;
-
-    if (std::memcmp(magic, kStateMagic, sizeof(magic)) != 0) {
-        // Not our format — could be legacy state, ignore
-        return kResultOk;
-    }
-
-    uint32 version = 0;
-    if (state->read(&version, sizeof(version), &numBytesRead) != kResultOk
-        || numBytesRead != sizeof(version))
-        return kResultFalse;
-
-    uint32 pathLen = 0;
-    if (state->read(&pathLen, sizeof(pathLen), &numBytesRead) != kResultOk
-        || numBytesRead != sizeof(pathLen))
-        return kResultFalse;
-
-    if (pathLen > kMaxPathLen)
-        return kResultFalse;
-
+    // Read and validate wrapper state header
     std::string pluginPath;
-    if (pathLen > 0) {
-        pluginPath.resize(pathLen);
-        if (state->read(pluginPath.data(), pathLen, &numBytesRead) != kResultOk || numBytesRead != static_cast<int32>(pathLen))
-            return kResultFalse;
-    }
+    if (readStateHeader(state, pluginPath) != kResultOk)
+        return kResultFalse;
 
     // Load the plugin if needed
     if (!pluginPath.empty() && pluginPath != currentPluginPath_) {
@@ -336,21 +310,10 @@ tresult PLUGIN_API Processor::getState(IBStream* state) {
     if (!state)
         return kResultFalse;
 
-    int32 numBytesWritten = 0;
-
-    // Write magic
-    state->write(const_cast<char*>(kStateMagic), sizeof(kStateMagic), &numBytesWritten);
-
-    // Write version
-    uint32 version = kStateVersion;
-    state->write(&version, sizeof(version), &numBytesWritten);
-
-    // Write plugin path
-    uint32 pathLen = static_cast<uint32>(currentPluginPath_.size());
-    state->write(&pathLen, sizeof(pathLen), &numBytesWritten);
-    if (pathLen > 0) {
-        state->write(const_cast<char*>(currentPluginPath_.data()), pathLen, &numBytesWritten);
-    }
+    // Write wrapper state header
+    tresult headerResult = writeStateHeader(state, currentPluginPath_);
+    if (headerResult != kResultOk)
+        return headerResult;
 
     // Write hosted component state
     if (hostedComponent_) {
