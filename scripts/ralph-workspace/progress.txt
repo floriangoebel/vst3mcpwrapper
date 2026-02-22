@@ -1,0 +1,279 @@
+## Codebase Patterns
+- C++20, CMake 3.25+, macOS + Linux. OBJCXX enabled conditionally via `enable_language(OBJCXX)` inside `if(APPLE)`
+- VST3 SDK fetched via FetchContent (v3.7.12_build_20)
+- cpp-mcp library target name is `mcp` (not `cpp_mcp`)
+- All source in source/, namespace VST3MCPWrapper
+- COM-style interfaces (addRef/release) — use IPtr<> for safe ref counting
+- Audio thread uses try_lock (never blocks) for parameter queue drain
+- `MainThreadDispatcher` abstracts dispatch_async (macOS) / worker thread (Linux) for MCP load/unload
+- State format: magic "VMCW" + version uint32 + pathLen uint32 + path + hosted state
+- Build: cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target VST3MCPWrapper
+- Test target: cmake --build build --target VST3MCPWrapper_Tests
+- Configure with tests: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON -G "Unix Makefiles"
+- MCP handler logic extracted into `source/mcp_param_handlers.h` and `source/mcp_plugin_handlers.h` — testable inline functions separate from Controller
+- Plugin management handlers are pure response-formatting functions (no VST3 mock dependencies) — pass strings/vectors as inputs
+- Test target links against `mcp` library and includes `${cpp_mcp_SOURCE_DIR}/include` + `${cpp_mcp_SOURCE_DIR}/common` for `mcp::json` (which is `nlohmann::ordered_json`)
+- `mcp::json` is defined in `mcp_message.h` as `using json = nlohmann::ordered_json` — include `mcp_message.h` for minimal JSON access
+- Run tests: ctest --test-dir build --output-on-failure
+- Google Test v1.14.0 via FetchContent in tests/CMakeLists.txt
+- Test target links: sdk, sdk_hosting, GTest::gtest, GTest::gtest_main, GTest::gmock
+- Test target includes `hostedplugin.cpp` + `module_mac.mm` (with `-fobjc-arc`) + macOS frameworks for hosting APIs
+- Use `fillTChar()` helper pattern to populate `TChar[]` buffers from `char16_t` literals in tests
+- Use `ResizableMemoryIBStream` (header-only from `public.sdk/source/vst/utility/memoryibstream.h`) for test IBStream — supports read/write/seek/rewind
+- State format read/write extracted into `writeStateHeader()`/`readStateHeader()` in `stateformat.h` — test these directly instead of going through Processor
+- HostedPluginModule is a singleton — tests sharing it must drain the param queue in SetUp/TearDown to avoid cross-test contamination
+- VST3 mock interfaces in `tests/mocks/mock_vst3.h` — MockComponent, MockAudioProcessor, MockEditController, MockMessage, MockAttributeList with working ref counting and queryInterface
+- On macOS, `PLUGIN_API` is empty — MOCK_METHOD works directly without calling convention issues
+- Mock ref counting: starts at 1, addRef increments, release decrements (no self-delete — test owns the object)
+- `FUnknownPrivate::iidEqual()` for comparing TUIDs in queryInterface implementations
+- `${CMAKE_CURRENT_SOURCE_DIR}` added to test include dirs for `mocks/` subdirectory access
+- `friend class ProcessorTestAccess;` in processor.h for testing private state — define accessor class in VST3MCPWrapper namespace in test files
+- Stack-allocated mocks with IPtr: always clear the IPtr before the mock goes out of scope to avoid use-after-destroy
+- Processor can be instantiated with `new Processor()` + `initialize(nullptr)` for testing; call `terminate()` + `release()` in TearDown
+- `ParameterChanges` from sdk_hosting is a stack-local in process() — verify parameter data inside mock's process lambda, never after the call returns (use-after-free)
+- `ProcessorTestAccess` can be extended per test file with extra accessors (setProcessorReady, setHostedActive, etc.)
+- Platform-specific code pattern: header with templates + `postImpl()` declaration, .mm/.cpp files for platform implementations. Use `if(APPLE)...else()` in CMake for platform source files
+- `MainThreadDispatcher` owns the alive flag and dispatch logic — MCP handlers use `dispatcher.dispatch<R>(func, shutdownValue)` instead of raw dispatch_async + promise/future
+- Platform-specific views: `wrapperview.mm` (macOS, NSView drop zone) / `wrapperview_linux.cpp` (no-op stub). Same `wrapperview.h` header used on both platforms
+- Gate `#include <os/log.h>` and `os_log` calls behind `#ifdef __APPLE__`; use `fprintf(stderr, ...)` on Linux
+- On Linux, add `module_linux.cpp` + `linuxmain.cpp` from VST3 SDK in `else()` CMake branches
+
+---
+
+## 2026-02-22 - US-001
+- Set up test framework and CMake integration
+- Files changed:
+  - CMakeLists.txt (added BUILD_TESTS option + add_subdirectory(tests))
+  - tests/CMakeLists.txt (new: Google Test FetchContent, test executable, linking)
+  - tests/test_placeholder.cpp (new: single sanity check test)
+- **Learnings for future iterations:**
+  - Existing build uses Unix Makefiles generator — must specify `-G "Unix Makefiles"` when reconfiguring or remove CMakeCache.txt if generator mismatch occurs
+  - Google Test target names are `GTest::gtest`, `GTest::gtest_main`, `GTest::gmock` (not just gtest/gmock)
+  - `gtest_discover_tests()` (from `include(GoogleTest)`) auto-registers tests with CTest
+  - Test include path: `${CMAKE_SOURCE_DIR}/source` gives access to all project headers
+---
+
+## 2026-02-22 - US-002
+- Added 16 tests for `utf16ToUtf8()` covering ASCII, 2-byte UTF-8, 3-byte UTF-8, null termination, maxLen boundary, and empty input
+- Files changed:
+  - tests/test_utf16_conversion.cpp (new: 16 test cases for utf16ToUtf8)
+  - tests/CMakeLists.txt (added test_utf16_conversion.cpp, hostedplugin.cpp source, module_mac.mm + macOS frameworks)
+- **Learnings for future iterations:**
+  - `hostedplugin.cpp` pulls in `VST3::Hosting::Module::create()` which lives in `module_mac.mm` — test target needs `module_mac.mm` + macOS frameworks (`Foundation`, `CoreFoundation`, `AppKit`) to link
+  - `TChar` is `char16_t` on macOS — use `u"..."` string literals or manual `buf[i] = 0xNNNN` assignment to construct test input
+  - UTF-8 boundary values: 0x80 (first 2-byte), 0x7FF (last 2-byte), 0x800 (first 3-byte) — useful for boundary testing
+---
+
+## 2026-02-22 - US-003
+- Extracted `writeStateHeader()`/`readStateHeader()` inline helpers into `stateformat.h` for testability
+- Refactored `processor.cpp` setState/getState and `controller.cpp` setComponentState to use the new helpers
+- Created 13 tests covering: round-trip (with path, empty path, max-length path), invalid magic, unsupported version, path length overflow, truncated streams (magic only, missing path data, partial magic, empty stream), additional data after path, null stream handling
+- Files changed:
+  - source/stateformat.h (added writeStateHeader/readStateHeader inline functions)
+  - source/processor.cpp (refactored setState/getState to use helpers)
+  - source/controller.cpp (refactored setComponentState to use readStateHeader)
+  - tests/test_stateformat.cpp (new: 13 state format tests)
+  - tests/CMakeLists.txt (added test_stateformat.cpp)
+  - CLAUDE.md (updated stateformat.h description in source files table)
+- **Learnings for future iterations:**
+  - `ResizableMemoryIBStream` is the go-to IBStream for tests — header-only, supports read/write/seek/rewind
+  - Include path: `public.sdk/source/vst/utility/memoryibstream.h`
+  - State format helpers extracted to `stateformat.h` make it easy to test serialization without instantiating Processor
+  - Processor's original setState returned kResultOk for non-matching magic (legacy state handling) — the refactored version now returns kResultFalse consistently since readStateHeader is strict
+---
+
+## 2026-02-22 - US-004
+- Added 6 tests for pushParamChange()/drainParamChanges() parameter change queue
+- Tests cover: single push+drain, multiple pushes in order, drain clears queue, empty queue drain, concurrent pushes from 4 threads (1000 each, no data loss), try_lock non-blocking semantics
+- Files changed:
+  - tests/test_param_queue.cpp (new: 6 test cases)
+  - tests/CMakeLists.txt (added test_param_queue.cpp)
+- **Learnings for future iterations:**
+  - HostedPluginModule singleton requires careful test isolation — drain param queue in SetUp/TearDown
+  - drainParamChanges uses swap() semantics — the dest vector gets the queue contents, the internal queue gets the (empty) dest
+  - Concurrent push test uses atomic<bool> barrier to synchronize thread start for maximum contention
+  - try_lock behavior tested indirectly: concurrent push+drain threads that both complete without deadlock proves the audio-thread drain path never blocks
+---
+
+## 2026-02-22 - US-005
+- Added 11 tests for HostedPluginModule state management covering all public accessors and lifecycle
+- Tests cover: isLoaded() false on fresh singleton, load() with invalid path returns false + error, isLoaded() remains false after failed load, getPluginPath() empty when not loaded, hasControllerClassID() false before set, setControllerClassID/getControllerClassID round-trip, overwrite of controller class ID, setHostedComponent(nullptr)/getHostedComponent() nullptr, getHostedComponent() nullptr initially, unload() resets all state (loaded, path, controller CID, component, param queue), getFactory() returns nullopt when not loaded
+- Files changed:
+  - tests/test_hostedplugin.cpp (new: 11 test cases)
+  - tests/CMakeLists.txt (added test_hostedplugin.cpp)
+- **Learnings for future iterations:**
+  - TUID is `char[16]` — populate with memset or byte-by-byte assignment, compare with memcmp
+  - unload() calls resetState() which clears everything including the param queue — good for test isolation
+  - Testing load() success requires a real .vst3 bundle on disk; only the error path (invalid path) is testable in unit tests
+  - getFactory() returns std::optional — use `.has_value()` to check
+---
+
+## 2026-02-22 - US-006
+- Created gmock mock classes for core VST3 interfaces: MockComponent, MockAudioProcessor, MockEditController, MockMessage, MockAttributeList
+- Each mock has working COM ref counting (addRef/release) and queryInterface supporting all IIDs in the inheritance chain
+- Added 10 tests verifying mock instantiation, ref counting, and queryInterface for each mock type
+- Files changed:
+  - tests/mocks/mock_vst3.h (new: 5 mock classes with full interface coverage)
+  - tests/test_mock_vst3.cpp (new: 10 test cases)
+  - tests/CMakeLists.txt (added test_mock_vst3.cpp, added CMAKE_CURRENT_SOURCE_DIR to includes)
+- **Learnings for future iterations:**
+  - VST3 mock ref counting should NOT self-delete (test owns the object on the stack)
+  - `FUnknownPrivate::iidEqual()` compares TUIDs — use it in queryInterface implementations
+  - MOCK_METHOD works directly with VST3 interfaces on macOS since PLUGIN_API is empty
+  - Mock queryInterface must support all IIDs in the inheritance chain (e.g., MockComponent supports FUnknown, IPluginBase, IComponent)
+  - IAttributeList uses `AttrID` which is `typedef const char*`
+  - Include `ivstattributes.h` for IAttributeList (separate from `ivstmessage.h`)
+---
+
+## 2026-02-22 - US-007
+- Added 8 tests for Processor lifecycle state tracking: setActive, setProcessing (storage + forwarding), setBusArrangements, setupProcessing
+- Added `ProcessorTestAccess` friend class pattern for accessing private Processor members in tests
+- Files changed:
+  - source/processor.h (added `friend class ProcessorTestAccess;` + forward declaration)
+  - tests/test_processor_lifecycle.cpp (new: 8 test cases)
+  - tests/CMakeLists.txt (added test_processor_lifecycle.cpp and processor.cpp to test sources)
+- **Learnings for future iterations:**
+  - `friend class ProcessorTestAccess;` in processor.h gives tests access to private state — define ProcessorTestAccess in the VST3MCPWrapper namespace in the test file
+  - Processor can be instantiated with `new Processor()` and initialized with `initialize(nullptr)` — nullptr context is fine for testing
+  - Stack-allocated mocks work with IPtr if you clear the IPtr before the mock goes out of scope — prevents use-after-destroy
+  - Mock ref counting: IPtr::operator=(T*) calls addRef, IPtr destructor/reassignment calls release — mock refCount tracks this correctly
+  - `processor.cpp` added to test target sources — links fine with existing sdk/sdk_hosting libraries
+  - TearDown must clear injected hosted component/processor mocks before calling terminate() to avoid mock interactions during cleanup
+---
+
+## 2026-02-22 - US-008
+- Added 9 tests for Processor::process() audio passthrough and parameter injection
+- Tests cover: 32-bit float passthrough, 64-bit double passthrough, extra output channels zeroed (32+64 bit), empty numSamples, no inputs/outputs, parameter changes injected into ProcessData, direct forwarding without queued changes, original inputParameterChanges restored after process
+- Files changed:
+  - tests/test_processor_process.cpp (new: 9 test cases)
+  - tests/CMakeLists.txt (added test_processor_process.cpp)
+- **Learnings for future iterations:**
+  - `ParameterChanges` (from sdk_hosting) is a local variable inside process() — capturing its pointer in a mock callback and inspecting after process() returns causes use-after-free. Verify parameter data *inside* the mock's process lambda instead.
+  - TestAudioBuffers helper struct simplifies creating AudioBusBuffers with owned backing storage — manages vector<vector<float/double>> + pointer arrays
+  - ProcessData can have `inputParameterChanges = nullptr` — process() handles this gracefully
+  - `ProcessorTestAccess` can be extended per test file with additional accessors (e.g., setProcessorReady, setHostedActive) since it's defined in the test file, not a shared header
+  - HostedPluginModule singleton param queue must be drained in both SetUp and TearDown to prevent cross-test contamination
+---
+
+## 2026-02-22 - US-009
+- Added 10 tests for Processor::setState() and getState() covering state format validation and round-trip persistence
+- Tests cover: getState writes valid header (magic VMCW, version 1), getState includes plugin path, getState with no plugin writes empty path, setState with bad magic returns kResultFalse, setState with bad version returns kResultFalse, setState/getState round-trip preserves path, null stream handling for both get/setState, setState with empty path doesn't load, setState with same path doesn't reload
+- Files changed:
+  - tests/test_processor_state.cpp (new: 10 test cases)
+  - tests/CMakeLists.txt (added test_processor_state.cpp)
+- **Learnings for future iterations:**
+  - ProcessorTestAccess for state tests only needs `currentPluginPath_` access — keep accessors minimal per test file
+  - setState with a non-existent path calls loadHostedPlugin which fails, so currentPluginPath_ remains empty — test the round-trip by setting the path directly via ProcessorTestAccess then calling getState
+  - setState skips loading if pluginPath == currentPluginPath_ — this is tested to verify no unnecessary unload/reload
+  - ResizableMemoryIBStream works well for both writeStateHeader and processor setState/getState testing
+---
+
+## 2026-02-22 - US-010
+- Extracted MCP parameter tool handler logic from controller.cpp lambdas into testable inline functions in `source/mcp_param_handlers.h`
+- Added 10 tests covering: list_parameters (no plugin, all fields, display value), get_parameter (no plugin, valid ID, invalid ID), set_parameter (no plugin, valid ID, invalid ID, value clamping)
+- Refactored controller.cpp MCP handler lambdas to call extracted functions
+- Files changed:
+  - source/mcp_param_handlers.h (new: isValidParamId, handleListParameters, handleGetParameter, handleSetParameter)
+  - source/controller.cpp (refactored 3 handler lambdas to use extracted functions, removed static isValidParamId)
+  - tests/test_mcp_param_tools.cpp (new: 10 test cases)
+  - tests/CMakeLists.txt (added test file, linked `mcp` library, added cpp-mcp include dirs)
+  - CLAUDE.md (added mcp_param_handlers.h to source files table)
+  - scripts/ralph/prd.json (US-010 passes: true)
+- **Learnings for future iterations:**
+  - MCP handler logic extracted into standalone inline functions taking `IEditController*` — much easier to test than lambdas registered on mcp::server
+  - `mcp::json` is `nlohmann::ordered_json` (preserves key insertion order), defined in `mcp_message.h`
+  - Test target needs `mcp` library link + `${cpp_mcp_SOURCE_DIR}/include` and `${cpp_mcp_SOURCE_DIR}/common` include dirs
+  - nlohmann/json v3.11.3 is vendored in cpp-mcp's `common/json.hpp` — no external package needed
+  - Mock `getParamStringByValue` populates `String128` (decays to `TChar*`) via `Invoke` lambda — `DoAll(SetArgReferee)` doesn't work for C-style array output params
+  - HostedPluginModule singleton param queue must be drained in SetUp/TearDown for tests that call `handleSetParameter`
+---
+
+## 2026-02-22 - US-011
+- Extracted MCP plugin management tool handler logic from controller.cpp lambdas into testable inline functions in `source/mcp_plugin_handlers.h`
+- Added 10 tests covering: get_loaded_plugin (with plugin loaded, no plugin loaded), list_available_plugins (with paths, empty), load_plugin (invalid path error, success), unload_plugin (not loaded error, success), shutting down response, timeout response
+- Refactored controller.cpp MCP handler lambdas to call extracted functions
+- Files changed:
+  - source/mcp_plugin_handlers.h (new: handleGetLoadedPlugin, handleListAvailablePlugins, buildLoadPluginResponse, handleUnloadPluginNotLoaded, handleUnloadPluginSuccess, handleShuttingDown, handleTimeout)
+  - source/controller.cpp (refactored 4 handler lambdas to use extracted functions, added include)
+  - tests/test_mcp_plugin_tools.cpp (new: 10 test cases)
+  - tests/CMakeLists.txt (added test file)
+  - CLAUDE.md (added mcp_plugin_handlers.h to source files table)
+  - scripts/ralph/prd.json (US-011 passes: true)
+- **Learnings for future iterations:**
+  - MCP plugin tool handlers follow the same extraction pattern as param handlers — standalone inline functions taking simple inputs (strings, vectors) instead of Controller pointers
+  - Plugin management handlers are simpler than param handlers — no IEditController dependency, just pure response formatting
+  - The dispatch_async/promise/future logic stays in controller.cpp lambdas; only the response-building logic is extracted for testing
+  - Test file doesn't need mock VST3 interfaces or HostedPluginModule — the extracted handlers are pure functions taking string/vector inputs
+---
+
+## 2026-02-22 - US-012
+- Added 6 tests for Processor::notify() message routing covering LoadPlugin, UnloadPlugin, unrecognized messages, and edge cases
+- Tests cover: LoadPlugin with valid path (extracts path, calls unloadHostedPlugin on existing component, attempts loadHostedPlugin), unrecognized message ID returns kResultFalse, LoadPlugin with missing path attribute (getBinary fails), LoadPlugin with empty path (size=0), null message returns kResultFalse, UnloadPlugin clears hosted component
+- Files changed:
+  - tests/test_message_routing.cpp (new: 6 test cases)
+  - tests/CMakeLists.txt (added test_message_routing.cpp)
+  - scripts/ralph/prd.json (US-012 passes: true)
+- **Learnings for future iterations:**
+  - notify() calls loadHostedPlugin() which goes through HostedPluginModule::instance().load() — for invalid paths this fails gracefully, so tests can verify the message routing logic without real plugins
+  - To test that unloadHostedPlugin was called, inject mock component/processor via ProcessorTestAccess, then verify they were cleared after notify (unloadHostedPlugin calls terminate() on the component)
+  - MockAttributeList::getBinary uses `const void*&` and `uint32&` as output params — use `SetArgReferee<1>` and `SetArgReferee<2>` with `DoAll` to populate them
+  - AudioEffect::notify() returns kResultFalse for unrecognized message IDs — tests can verify unknown messages are forwarded correctly
+---
+
+## 2026-02-22 - US-013
+- Added 8 tests for shutdown safety covering alive flag mechanics and promise/future timeout behavior
+- Tests cover: alive starts true, set false causes check to return false, atomic thread safety (8 readers + writer), shared_ptr copies share same flag, future times out when promise never fulfilled, future completes before timeout, alive check prevents work after shutdown, full shutdown sequence completes within bounded time
+- Files changed:
+  - tests/test_shutdown.cpp (new: 8 test cases)
+  - tests/CMakeLists.txt (added test_shutdown.cpp)
+  - scripts/ralph/prd.json (US-013 passes: true)
+- **Learnings for future iterations:**
+  - The alive flag pattern is `shared_ptr<atomic<bool>>` — lambdas capture a copy of the shared_ptr so they share the same atomic bool
+  - Testing concurrent atomic reads: use a spin barrier (`atomic<bool> startBarrier`) to synchronize thread start, then flip the flag mid-read to verify both true and false are observed
+  - `std::promise` must be fulfilled before destruction or it throws — in timeout tests, fulfill the promise after checking timeout to avoid exceptions
+  - Shutdown tests don't need any VST3 dependencies — they test the concurrency primitives independently
+---
+
+## 2026-02-22 - US-014
+- Abstracted GCD `dispatch_async` to platform-independent `MainThreadDispatcher` class
+- macOS: uses `dispatch_async(dispatch_get_main_queue())` via `dispatcher_mac.mm`
+- Linux: uses a dedicated worker thread with condition variable task queue via `dispatcher_linux.cpp`
+- Header contains template `dispatch<R>()` method (returns `std::future<R>`) and void overload; platform-specific `postImpl()` is in .mm/.cpp
+- Controller's MCP `load_plugin` and `unload_plugin` handlers now use `dispatcher.dispatch()` instead of raw `dispatch_async` + manual promise/future setup
+- MCPServer struct's `alive` flag replaced by `MainThreadDispatcher::isAlive()`/`shutdown()`
+- Files changed:
+  - source/dispatcher.h (new: MainThreadDispatcher class with template dispatch methods)
+  - source/dispatcher_mac.mm (new: macOS implementation using dispatch_async)
+  - source/dispatcher_linux.cpp (new: Linux implementation using worker thread + condition variable)
+  - source/controller.cpp (replaced dispatch_async + alive flag with MainThreadDispatcher)
+  - CMakeLists.txt (added dispatcher files to plugin and platform-specific sources, added Linux else branch)
+  - tests/CMakeLists.txt (added dispatcher to test target for both platforms)
+  - CLAUDE.md (added dispatcher files to source table, updated threading docs)
+  - ARCHITECTURE.md (updated threading model and shutdown sequence to reference MainThreadDispatcher)
+  - scripts/ralph/prd.json (US-014 passes: true)
+- **Learnings for future iterations:**
+  - Template methods in header + platform-specific `postImpl()` in .mm/.cpp avoids Obj-C block syntax in headers while keeping template ergonomics
+  - `std::function<void()>` captured by `dispatch_async` Obj-C block needs `std::make_shared` wrapping — blocks copy-capture, but `std::function` isn't trivially copyable
+  - CMakeLists.txt: use `if(APPLE)...else()` for platform-specific source files, not just `if(APPLE)` — the Linux dispatcher file needs an else branch
+  - The `dispatcher_linux.cpp` will show clang diagnostics on macOS (undeclared members behind `#ifndef __APPLE__`) — this is expected and correct
+  - `MainThreadDispatcher` owns the alive flag — callers no longer manage `shared_ptr<atomic<bool>>` directly
+---
+
+## 2026-02-22 - US-015
+- Added Linux build support: conditional OBJCXX language, platform-specific module loading, no-op view stub, cross-platform logging
+- macOS behavior is unchanged — all 118 tests pass, plugin builds and signs correctly
+- Files changed:
+  - CMakeLists.txt (conditional `enable_language(OBJCXX)`, added `linuxmain.cpp`/`module_linux.cpp`/`wrapperview_linux.cpp` in else branches)
+  - source/wrapperview_linux.cpp (new: no-op WrapperPlugView for Linux — headless/MCP-only operation)
+  - source/controller.cpp (gated `<os/log.h>` and `os_log` calls behind `#ifdef __APPLE__`, added `fprintf` fallback on Linux)
+  - tests/CMakeLists.txt (added `module_linux.cpp` to test target on Linux)
+  - CLAUDE.md (updated source files table, CMake quirks, known limitations, conventions for cross-platform)
+  - ARCHITECTURE.md (added platform support note)
+  - scripts/ralph/prd.json (US-015 passes: true)
+- **Learnings for future iterations:**
+  - `enable_language(OBJCXX)` inside `if(APPLE)` is cleaner than always including OBJCXX in `project()` — avoids CMake errors on Linux
+  - `linuxmain.cpp` provides `ModuleEntry`/`ModuleExit` on Linux (equivalent of macOS `bundleEntry`/`bundleExit` from `macmain.cpp`)
+  - `wrapperview.h` is platform-independent (all `void*` members) — only the .mm/.cpp implementations differ
+  - `os_log` format strings use `%{public}s` which is Apple-specific — can't share format strings with `fprintf`, need separate `#ifdef` blocks per call
+  - The no-op Linux view still needs `controller.h` include for the destructor to access `controller_->activeView_`
+---
