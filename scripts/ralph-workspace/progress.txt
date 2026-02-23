@@ -1,167 +1,136 @@
-## Codebase Patterns
-- C++20, CMake 3.25+, macOS + Linux. OBJCXX enabled conditionally via `enable_language(OBJCXX)` inside `if(APPLE)`
-- VST3 SDK fetched via FetchContent (v3.7.12_build_20)
-- cpp-mcp library target name is `mcp` (not `cpp_mcp`)
-- All source in source/, namespace VST3MCPWrapper
-- COM-style interfaces (addRef/release) — use IPtr<> for safe ref counting
-- Audio thread uses try_lock (never blocks) for parameter queue drain
-- `MainThreadDispatcher` abstracts dispatch_async (macOS) / worker thread (Linux) for MCP load/unload
-- State format: magic "VMCW" + version uint32 + pathLen uint32 + path + hosted state
-- Build: cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target VST3MCPWrapper
-- Test target: cmake --build build --target VST3MCPWrapper_Tests
-- Configure with tests: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
-- MCP handler logic extracted into `source/mcp_param_handlers.h` and `source/mcp_plugin_handlers.h` — testable inline functions separate from Controller
-- Plugin management handlers are pure response-formatting functions (no VST3 mock dependencies) — pass strings/vectors as inputs
-- Test target links against `mcp` library and includes `${cpp_mcp_SOURCE_DIR}/include` + `${cpp_mcp_SOURCE_DIR}/common` for `mcp::json` (which is `nlohmann::ordered_json`)
-- `mcp::json` is defined in `mcp_message.h` as `using json = nlohmann::ordered_json` — include `mcp_message.h` for minimal JSON access
-- Run tests: ctest --test-dir build --output-on-failure
-- Google Test v1.14.0 via FetchContent in tests/CMakeLists.txt
-- Test target links: sdk, sdk_hosting, GTest::gtest, GTest::gtest_main, GTest::gmock
-- Use `fillTChar()` helper pattern to populate `TChar[]` buffers from `char16_t` literals in tests
-- Use `ResizableMemoryIBStream` (header-only from `public.sdk/source/vst/utility/memoryibstream.h`) for test IBStream — supports read/write/seek/rewind
-- State format read/write extracted into `writeStateHeader()`/`readStateHeader()` in `stateformat.h` — test these directly instead of going through Processor
-- HostedPluginModule is a singleton — tests sharing it must drain the param queue in SetUp/TearDown to avoid cross-test contamination
-- VST3 mock interfaces in `tests/mocks/mock_vst3.h` — MockComponent, MockAudioProcessor, MockEditController, MockMessage, MockAttributeList with working ref counting and queryInterface
-- Mock ref counting: starts at 1, addRef increments, release decrements (no self-delete — test owns the object)
-- `FUnknownPrivate::iidEqual()` for comparing TUIDs in queryInterface implementations
-- `${CMAKE_CURRENT_SOURCE_DIR}` added to test include dirs for `mocks/` subdirectory access
-- `friend class ProcessorTestAccess;` in processor.h for testing private state — define accessor class in VST3MCPWrapper namespace in test files
-- Stack-allocated mocks with IPtr: always clear the IPtr before the mock goes out of scope to avoid use-after-destroy
-- Processor can be instantiated with `new Processor()` + `initialize(nullptr)` for testing; call `terminate()` + `release()` in TearDown
-- `ParameterChanges` from sdk_hosting is a stack-local in process() — verify parameter data inside mock's process lambda, never after the call returns (use-after-free)
-- `ParameterValueQueue::addPoint` inserts sorted by `sampleOffset` — not in append order. `ParameterChanges::addParameterData` returns existing queue for duplicate param IDs
-- `ProcessorTestAccess` can be extended per test file with extra accessors (setProcessorReady, setHostedActive, etc.)
-- Platform-specific code pattern: header with templates + `postImpl()` declaration, .mm/.cpp files for platform implementations. Use `if(APPLE)...else()` in CMake for platform source files
-- `MainThreadDispatcher` owns the alive flag and dispatch logic — MCP handlers use `dispatcher.dispatch<R>(func, shutdownValue)` instead of raw dispatch_async + promise/future
-- Platform-specific views: `wrapperview.mm` (macOS, NSView drop zone) / `wrapperview_linux.cpp` (no-op stub). Same `wrapperview.h` header used on both platforms
-- MCP server constructor: `mcp::server(conf)` where `conf` is `mcp::server::configuration{host, port, name, version}` — no `(host, port)` shorthand in our version
-- MCP `sse_client` constructor takes a URL string: `mcp::sse_client("http://127.0.0.1:8771")` — NOT `(host, port)` args
-- MCP tool handler return value goes into `tool_result["content"]` — return just the content array (e.g., `json::array({{{"type","text"},{"text","..."}}})`), NOT the full `{content, isError}` envelope
-- MCP server `start(false)` = non-blocking (returns immediately), `start(true)` = blocking (run in a thread). Use `start(false)` for tests
-- Linux VST3 scan paths (SDK module_linux.cpp): $HOME/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/, /proc/self/exe/../vst3/
-- Gate `#include <os/log.h>` and `os_log` calls behind `#ifdef __APPLE__`; use `fprintf(stderr, ...)` on Linux
-- On Linux, add `module_linux.cpp` + `linuxmain.cpp` from VST3 SDK in `else()` CMake branches
-- On Linux, `SMTG_ENABLE_VSTGUI_SUPPORT OFF` must be set (not just `SMTG_ADD_VSTGUI OFF`) to prevent VSTGUI from requiring X11 dev headers
-- On Linux, `SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF` and `SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF` needed alongside `SMTG_ADD_VST3_PLUGINS_SAMPLES OFF` etc.
-- On Linux, the `mcp` static library must have `POSITION_INDEPENDENT_CODE ON` since VST3 plugins are .so shared objects (set via `set_target_properties` after `FetchContent_MakeAvailable`)
-- GCC requires explicit `#include <optional>` — Clang/macOS may find it transitively but GCC does not
-- Linux VST3 bundle layout: `build/VST3/Debug/VST3MCPWrapper.vst3/Contents/x86_64-linux/VST3MCPWrapper.so`
-- Test suite is fully platform-independent — all tests pass identically on macOS (Clang) and Linux (GCC) with no platform gating needed
-- `$<TARGET_FILE:VST3MCPWrapper>` generator expression works in child-scope `add_test()` and `target_compile_definitions()` for referencing parent-scope targets
-- Own built plugin can be loaded as a hosted plugin in tests via `Module::create()` — safe because it only loads the .so and gets the factory, no component initialization. Use `TEST_PLUGIN_SO_PATH` compile definition to inject the path
-- `replayDawStateOntoHosted()` is a private method testable via `ProcessorTestAccess::callReplayDawState()` — since `loadHostedPlugin()` requires a real VST3 file, test replay by injecting mocks then calling the replay method directly
-- Linux VST3 bundle also includes `Contents/Resources/moduleinfo.json` (auto-generated by SDK moduleinfotool)
-
----
-
 # Ralph Progress Log
-Started: new PRD — Codebase Hardening
+Started: Sun Feb 22 10:11:13 PM CET 2026
 ---
+
+## Codebase Patterns
+- Build and test: `cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON && cmake --build build --target VST3MCPWrapper_Tests && ctest --test-dir build --output-on-failure`
+- `processorReady_` has exactly 3 call sites in processor.cpp: store true (loadHostedPlugin), store false (unloadHostedPlugin), load (process)
+- CLAUDE.md Threading Safety section and ARCHITECTURE.md Stored State/Loading/Unloading sections both document memory ordering — keep them in sync
+- grep the entire repo (not just source/) when auditing all uses of a symbol — tests and docs may also reference it
+- All logging in source/ must use `WRAPPER_LOG` / `WRAPPER_LOG_ERROR` from `logging.h` — never raw `fprintf(stderr, ...)`
+- WrapperPlugView ↔ Controller use COM observer pointers with manual back-pointer clearing in `terminate()` — `clearController()` breaks the cycle
+- Test access helpers live in `tests/helpers/` — `ProcessorTestAccess` for Processor, `ControllerTestAccess` for Controller. Both use friend class declarations in the production header.
 
 ## 2026-02-22 - US-001
-- Added `std::isfinite()` validation in `handleSetParameter()` before `std::clamp` — rejects NaN, +Inf, -Inf with `isError: true`
-- Added `#include <cmath>` to `mcp_param_handlers.h`
-- Added 3 unit tests: `SetParameterRejectsNaN`, `SetParameterRejectsPosInf`, `SetParameterRejectsNegInf`
-- Files changed: `source/mcp_param_handlers.h`, `tests/test_mcp_param_tools.cpp`
+- Changed `processorReady_` from `memory_order_relaxed` to `memory_order_release` (stores) and `memory_order_acquire` (load in process())
+- This ensures the audio thread sees fully-constructed hostedProcessor_/hostedComponent_ when the flag becomes true
+- Other atomic bools (wrapperActive_, wrapperProcessing_, hostedActive_, hostedProcessing_) remain relaxed — they are independent flags, not publication guards
+- Files changed: `source/processor.cpp`, `CLAUDE.md`, `ARCHITECTURE.md`
 - **Learnings for future iterations:**
-  - `std::clamp` with NaN is UB-adjacent: NaN comparisons are always false, so clamp returns NaN silently — always validate with `std::isfinite()` first
-  - MCP param handler tests use `MockEditController` from `tests/mocks/mock_vst3.h` with GMock expectations
-  - The error response pattern is `{"content", {{{"type","text"},{"text","..."}}}}, {"isError", true}`
+  - The test helper `processor_test_access.h` uses default memory order (seq_cst) for processorReady_ — no change needed there
+  - ARCHITECTURE.md has pseudo-code loading/unloading sequences that mention processorReady_ — update those too when changing ordering semantics
 ---
 
 ## 2026-02-22 - US-002
-- Wrapped `Controller::startMCPServer()` in try-catch: on failure, logs to stderr with `fprintf` and resets `mcpServer_` to `nullptr`
-- Wrapped the `server->start(true)` thread lambda in `MCPServer::start()` with try-catch to prevent `std::terminate` if port binding throws inside the background thread
-- Added `DuplicatePortBindDoesNotCrash` integration test: starts two servers on the same port, verifies no crash and first server remains functional
-- Files changed: `source/controller.cpp`, `tests/test_mcp_server_integration.cpp`
+- Replaced all raw `fprintf(stderr, ...)` calls in source files with `WRAPPER_LOG_ERROR(...)` macros
+- Two call sites converted: `hostedplugin.cpp` (param queue overflow warning) and `processor.cpp` (null data pointer in notify)
+- Added `#include "logging.h"` to both files
+- Removed unused `#include <cstdio>` from processor.cpp (logging.h includes it internally)
+- Files changed: `source/hostedplugin.cpp`, `source/processor.cpp`
 - **Learnings for future iterations:**
-  - `server->start(true)` runs in a `std::thread` — an uncaught exception in a thread calls `std::terminate()`, which is worse than propagating to the caller. Always wrap thread bodies in try-catch
-  - The MCP server is non-critical: audio passthrough must work even if the server fails to start. The `mcpServer_` being `nullptr` is the safe fallback state
-  - The port binding happens inside `start(true)` (httplib::Server::listen), not in the `mcp::server` constructor — both locations need error handling
-  - Integration tests using `mcp::sse_client` take ~10s each due to SSE connection overhead — keep the number of integration tests reasonable
+  - Only controller.cpp previously included logging.h — any new logging in other source files needs the include added
+  - The WRAPPER_LOG macros add the `[VST3MCPWrapper]` prefix automatically — don't include it in the format string
+  - On macOS, WRAPPER_LOG routes to `os_log` (not stderr) — this is the intended behavior for unified logging
+  - Test files may use their own fprintf — the story explicitly excludes test files from conversion
 ---
 
 ## 2026-02-22 - US-003
-- Added null guard for `data` pointer after `getBinary()` returns `kResultOk` in `Processor::notify()` — if `data` is nullptr, logs warning to stderr and returns early
-- Added `#include <cstdio>` to `processor.cpp` for `fprintf`
-- Added unit test `LoadPluginMessageNullDataPointerNoCrash`: mocks `getBinary` returning `kResultOk` with `data=nullptr` and `size=10`, verifies no crash and no loading occurs
-- Files changed: `source/processor.cpp`, `tests/test_message_routing.cpp`
+- Added surrogate pair handling to `utf16ToUtf8()` in hostedplugin.cpp
+- Detects high surrogate (0xD800-0xDBFF) + low surrogate (0xDC00-0xDFFF) pairs and decodes to code points U+10000-U+10FFFF
+- Encodes supplementary code points as 4-byte UTF-8 (0xF0 lead byte)
+- Lone/orphaned surrogates are replaced with U+FFFD replacement character
+- Added 8 new tests: musical note surrogate pair, mixed BMP+supplementary, lone high surrogate (mid-string and at end), lone low surrogate, boundary low (U+10000), boundary high (U+10FFFF), high surrogate at maxLen boundary
+- Files changed: `source/hostedplugin.cpp`, `tests/test_utf16_conversion.cpp`
 - **Learnings for future iterations:**
-  - `std::string(nullptr, N)` is undefined behavior — always null-check pointers from SDK APIs even when the return code is `kResultOk`
-  - MockAttributeList's `getBinary` uses `SetArgReferee<1>(nullData)` to set the output pointer to nullptr in tests — no mock extension needed, GMock handles it natively
-  - The null guard pattern: check `!data` after `kResultOk && size > 0`, log with `fprintf(stderr, ...)`, return early
+  - Surrogate check must come before the BMP encoding branches — surrogates fall in the 0xD800-0xDFFF range which would otherwise hit the 3-byte UTF-8 branch
+  - When high surrogate is at maxLen boundary, the low surrogate is beyond maxLen — treat as lone surrogate
+  - The `fillTChar` helper is not needed for surrogate tests — direct TChar array assignment works fine for values > 0x7F
 ---
 
 ## 2026-02-22 - US-004
-- Removed `test_placeholder.cpp` (trivial `1+1=2` test) from `tests/` and `tests/CMakeLists.txt`
-- Rewrote `test_mock_vst3.cpp`: removed 5 trivial instantiation-only tests, added comprehensive queryInterface and ref counting tests for all 5 mock types
-- Added: `RefCountStartsAtOne` test verifying all mocks start at refCount=1
-- Added: `MockAudioProcessorQueryInterface` test (was missing)
-- Added: FUnknown::iid queryInterface coverage and unsupported IID (kNoInterface) tests for all mock types
-- Files changed: `tests/test_placeholder.cpp` (deleted), `tests/test_mock_vst3.cpp`, `tests/CMakeLists.txt`
+- Extracted `kDispatchTimeout` constexpr (`std::chrono::seconds(5)`) — replaces two identical `seconds(5)` literals in load_plugin and unload_plugin handlers
+- MCP server version now uses `FULL_VERSION_STR` from `version.h` instead of hardcoded `"0.1.0"`
+- Added `#include "version.h"` to controller.cpp
+- Verified `kMCPServerPort` is already the sole source of the `8771` literal in source files — no raw occurrences elsewhere
+- Files changed: `source/controller.cpp`
 - **Learnings for future iterations:**
-  - The mock_vst3.h mocks all start refCount at 1 in their constructor — tests can verify this via `addRef()` returning 2
-  - MockAudioProcessor supports `IAudioProcessor::iid` and `FUnknown::iid` — not `IPluginBase::iid` (since IAudioProcessor doesn't extend IPluginBase)
-  - When removing test files, only need to delete the file and remove it from the `add_executable()` in `tests/CMakeLists.txt` — gtest_discover_tests handles the rest
+  - `version.h` uses `#define FULL_VERSION_STR` (not a constexpr) — it's a preprocessor macro, safe to use in string initializers
+  - `kMCPServerPort` and `kDispatchTimeout` are file-scope `static constexpr` in controller.cpp — not in a header, since they're only used in the MCPServer struct
 ---
 
 ## 2026-02-22 - US-005
-- Added 4 new tests to `test_processor_process.cpp` verifying DAW automation + MCP parameter change merging:
-  - `MergesDawAndMcpChangesForDifferentParams`: DAW param 100 + MCP param 42 → both appear in merged ParameterChanges
-  - `MergesDawAndMcpChangesForSameParam`: DAW param 50 + MCP param 50 → single queue with 2 points (sorted by sampleOffset)
-  - `OnlyDawChangesForwardedWhenMcpQueueEmpty`: Empty MCP queue → hosted processor receives original DAW inputParameterChanges directly (no merge path)
-  - `OnlyMcpChangesWhenDawInputParamChangesNull`: Null DAW inputParameterChanges + MCP changes → hosted processor sees only MCP changes, null pointer restored after
-- Existing tests (`ParamChangesInjectedIntoProcessData`, `OriginalInputParamChangesRestoredAfterProcess`) still pass alongside new tests
-- Files changed: `tests/test_processor_process.cpp`
+- Moved `addRef()`, `release()`, and `queryInterface()` from platform-specific files into `wrapperview.h` as inline methods
+- Removed 30 identical lines from both `wrapperview.mm` and `wrapperview_linux.cpp`
+- The `refCount_` member was already declared in `wrapperview.h` (as `std::atomic<uint32>`)
+- `inline` keyword on out-of-class definitions prevents ODR violations when header is included in multiple TUs
+- Files changed: `source/wrapperview.h`, `source/wrapperview.mm`, `source/wrapperview_linux.cpp`
 - **Learnings for future iterations:**
-  - `ParameterValueQueue::addPoint` inserts points sorted by `sampleOffset`, NOT in append order — when DAW has offset=5 and MCP has offset=0, the MCP point appears first in the queue
-  - `ParameterChanges::addParameterData` returns the existing queue if the param ID already exists (lines 176-182 in SDK source) — same-param changes from DAW and MCP merge into one queue
-  - When MCP queue is empty (`drainBuffer_.empty()`), process() takes the direct path (line 240) and forwards the original ProcessData without creating merged ParameterChanges — test this by verifying `d.inputParameterChanges == &dawChanges` pointer identity
-  - Always verify parameter data inside the mock process lambda — `ParameterChanges` is stack-local in process() and destroyed after return
+  - WrapperPlugView COM methods are platform-independent — only `isPlatformTypeSupported`, `attached`, `removed`, `onSize`, `switchToHostedView`, `switchToDropZone`, `removeDropZone`, and the constructor/destructor have platform-specific behavior
+  - The header already included `pluginterfaces/base/funknown.h` which provides `FUnknownPrivate::iidEqual` — no extra includes needed
+  - Both the plugin target and test target compile `wrapperview_linux.cpp`, so the inline methods are exercised in both link contexts
 ---
 
 ## 2026-02-22 - US-006
-- Implemented the already-declared `replayDawStateOntoHosted()` method in `processor.cpp` — extracted duplicated replay logic from `notify("LoadPlugin")` and `setState()` into a single method
-- Added 5 new tests in `test_processor_lifecycle.cpp`:
-  - `ReplayActivatesHostedWhenWrapperActive`: wrapperActive=true → replay calls setActive(true) on hosted component
-  - `ReplayStartsProcessingWhenWrapperProcessing`: wrapperProcessing=true → replay calls setProcessing(true) on hosted processor
-  - `ReplayActivatesBeforeStartsProcessing`: both flags set → InSequence verifies setActive before setProcessing
-  - `ReplaySkipsActivationWhenWrapperNotActive`: wrapperActive=false → neither setActive nor setProcessing called (Times(0))
-  - `SetBusArrangementsForwardsToHostedProcessor`: verifies setBusArrangements forwards to hosted processor when present
-- Added `callReplayDawState()` accessor to ProcessorTestAccess for directly invoking the private replay method
-- Files changed: `source/processor.cpp`, `tests/test_processor_lifecycle.cpp`
+- Hardened WrapperPlugView destructor against controller lifetime by adding `clearController()` method and calling it from `Controller::terminate()`
+- `Controller::terminate()` now clears the view's back-pointer (`activeView_->clearController()`) and sets `activeView_ = nullptr` before any teardown
+- The existing `if (controller_)` null check in ~WrapperPlugView now correctly guards against both nullptr-from-constructor and controller-destroyed-first scenarios
+- Added public `clearController()` method to WrapperPlugView in wrapperview.h (avoids friend dependency; makes intent explicit)
+- Added comments documenting the lifetime relationship: Controller creates WrapperPlugView, DAW owns the view's lifetime via COM ref-counting, Controller may be destroyed first
+- Files changed: `source/controller.cpp`, `source/controller.h`, `source/wrapperview.h`, `source/wrapperview.mm`, `source/wrapperview_linux.cpp`
 - **Learnings for future iterations:**
-  - `replayDawStateOntoHosted()` was declared in processor.h but never implemented — the replay was duplicated inline in notify() and setState(). Extracting it removes duplication and makes the replay testable
-  - Since `loadHostedPlugin()` requires a real VST3 file on disk (goes through HostedPluginModule singleton), replay tests can't go through the full notify() → loadHostedPlugin() → replay flow. Instead, test the replay method directly by: (1) setting wrapper flags via public API, (2) injecting mocks via ProcessorTestAccess, (3) calling replay via ProcessorTestAccess
-  - The bus arrangement replay happens inside `loadHostedPlugin()` (before activation), not in `replayDawStateOntoHosted()`. Test it via `setBusArrangements()` forwarding which uses the same code path
-  - `::testing::InSequence` is the GMock tool for verifying call ordering across different mock objects
+  - `controller_` is private in WrapperPlugView — Controller is NOT a friend of WrapperPlugView (only the reverse: WrapperPlugView is a friend of Controller). Use a public method rather than direct member access.
+  - The COM observer pointer pattern (raw pointer + manual back-pointer clearing in terminate) is standard for VST3 — no shared_ptr/weak_ptr needed
+  - The DropZoneView (macOS) also has a raw controller pointer — same pattern applies if it outlives the controller
 ---
 
 ## 2026-02-22 - US-007
-- Added 5 error path tests to `test_hostedplugin.cpp`:
-  - `FailedLoadLeavesModuleInCleanState`: comprehensive check that all getters return defaults after failed load (isLoaded, pluginPath, factory, controllerClassID, hostedComponent, paramQueue)
-  - `ValidLoadAfterFailedLoadSucceeds`: failed load followed by loading own built plugin — verifies no stuck state
-  - `UnloadWhenNothingLoadedIsNoOp`: unload on fresh singleton doesn't crash, state remains clean
-  - `DoubleUnloadIsNoOp`: two sequential unloads don't crash
-  - `LoadDifferentPathReplacesExistingPlugin`: loads own plugin, then loads different (invalid) path — verifies resetState() is called and old plugin is cleaned up
-- Added `TEST_PLUGIN_SO_PATH` compile definition in `tests/CMakeLists.txt` via `$<TARGET_FILE:VST3MCPWrapper>` generator expression
-- Added `add_dependencies(VST3MCPWrapper_Tests VST3MCPWrapper)` to ensure plugin is built before tests
-- Files changed: `tests/test_hostedplugin.cpp`, `tests/CMakeLists.txt`
+- Added 7 tests for `Controller::createView()` lifecycle in new `tests/test_controller_view.cpp`
+- Fixed `createView()` to validate the `name` parameter against `ViewType::kEditor` — returns `nullptr` for unsupported view types and `nullptr` name (standard VST3 practice)
+- Created `tests/helpers/controller_test_access.h` — `ControllerTestAccess` friend accessor for Controller private members (follows `ProcessorTestAccess` pattern)
+- Tests cover: editor view creation, unsupported type rejection, null name rejection, IPlugView queryInterface, activeView_ tracking, second view replacing first, initial null state
+- Files changed: `source/controller.cpp`, `source/controller.h`, `tests/test_controller_view.cpp` (new), `tests/helpers/controller_test_access.h` (new), `tests/CMakeLists.txt`, `CLAUDE.md`
 - **Learnings for future iterations:**
-  - Own built plugin can be used as a valid VST3 for integration tests — `Module::create()` only loads the .so and gets the factory, no component initialization occurs, so loading "ourselves" is safe
-  - Use `$<TARGET_FILE:VST3MCPWrapper>` as a compile definition to inject the SO path, then strip `/Contents/...` in C++ to get the .vst3 bundle directory
-  - `GTEST_SKIP()` is the right pattern for tests that need a resource that might not be available — prefer it over `#ifdef` guards inside test bodies
-  - `HostedPluginModule::load()` with `loaded_=true` and a different path calls `resetState()` before attempting the new load — if the new load fails, the old plugin is already gone (no rollback)
+  - `createView()` does not require `initialize()` — it only allocates a `WrapperPlugView` and sets `activeView_`
+  - `FIDStringsEqual` from `pluginterfaces/base/fstrdefs.h` is the standard way to compare `FIDString` values — available through the SDK include chain
+  - `ViewType::kEditor` is the only standard view type in VST3 — defined as `"editor"` in `ivsteditcontroller.h`
+  - Follow the `ProcessorTestAccess` pattern for Controller test access: friend class declaration in header + test helper in `tests/helpers/`
 ---
 
 ## 2026-02-22 - US-008
-- Updated `set_parameter` tool description in both CLAUDE.md and ARCHITECTURE.md to document NaN/Infinity validation (added by US-001)
-- Updated validation note below MCP tools tables to mention `std::isfinite` check for `set_parameter`
-- Removed "No error handling for MCP server port conflicts" from Known Limitations (fixed by US-002)
-- Added MCP server error handling behavior to MCP Server section: try-catch wraps server start, failure logged to stderr, plugin continues without MCP
+- Added 7 tests for `Controller::setComponentState()` in new `tests/test_controller_state.cpp`
+- Tests cover: null stream, empty path, nonexistent plugin path (load fails gracefully), corrupt magic, corrupt version, truncated stream, empty stream
+- Extended `ControllerTestAccess` with `currentPluginPath()` and `hostedController()` accessors
+- Key finding: `setComponentState()` returns `kResultOk` for ALL error cases (null stream, corrupt header, failed plugin load) — this is deliberate because header parsing failure is non-fatal on the controller side. The controller's setComponentState is for state synchronization, not validation.
+- Files changed: `tests/test_controller_state.cpp` (new), `tests/helpers/controller_test_access.h`, `tests/CMakeLists.txt`, `CLAUDE.md`
+- **Learnings for future iterations:**
+  - `setComponentState()` does not require `initialize()` — it reads the state header and attempts `setupHostedController()` internally
+  - Unlike `Processor::setState()` which returns `kResultFalse` for corrupt data, `Controller::setComponentState()` returns `kResultOk` for all parse failures — the controller treats state header errors as non-fatal
+  - When a valid path is present but the plugin can't be loaded (e.g., nonexistent file), `currentPluginPath_` remains empty and `hostedController_` stays null — the controller falls through gracefully
+  - `ControllerTestAccess` now mirrors `ProcessorTestAccess` style — thread-safe accessors using `lock_guard` on the mutex
+---
+
+## 2026-02-22 - US-009
+- Fixed `Processor::setState()` to check the return value of `loadHostedPlugin()`
+- On failure, logs a warning via `WRAPPER_LOG_ERROR` with the plugin path and skips `replayDawStateOntoHosted()`
+- `setState()` still returns `kResultOk` — the wrapper state header was valid; the plugin just couldn't be loaded
+- Added test `SetStateWithNonexistentPluginReturnsOkAndPassesThrough`: verifies `kResultOk` return, `processorReady_` is false, and `currentPluginPath_` is empty
+- Files changed: `source/processor.cpp`, `tests/test_processor_state.cpp`
+- **Learnings for future iterations:**
+  - `loadHostedPlugin()` clears `currentPluginPath_` via `unloadHostedPlugin()` at the start, so after a failed load `currentPluginPath_` is always empty
+  - The `notify("LoadPlugin")` path still calls `replayDawStateOntoHosted()` unconditionally after `loadHostedPlugin()` — this is harmless (hostedComponent_ is null, replay is a no-op) but could be tightened similarly
+---
+
+## 2026-02-22 - US-010
+- Documented 4 previously-undocumented architectural decisions in CLAUDE.md and ARCHITECTURE.md
+- `performEdit()` non-forwarding: explained that it deliberately does NOT forward to DAW's `componentHandler` because the wrapper exposes no parameters — added to Architecture section, Threading Safety, Known Limitations (CLAUDE.md) and Parameter Change Flow (ARCHITECTURE.md)
+- Linux `MainThreadDispatcher` naming: clarified that on Linux tasks run on a dedicated worker thread, not the actual main thread — added to Threading Safety (CLAUDE.md) and Threading Rules (ARCHITECTURE.md)
+- `activeView_` raw observer pointer: documented the COM observer pattern and `clearController()` teardown safety — added to Threading Safety (CLAUDE.md) and new Object Lifetime Notes section (ARCHITECTURE.md)
+- Dual `currentPluginPath_`: documented why both Processor and Controller have independent copies on different threading domains — added to Threading Safety (CLAUDE.md) and Object Lifetime Notes (ARCHITECTURE.md)
+- Updated `wrapperview.h` Source Files table entry to reflect inline COM methods and `clearController()` added in US-005/US-006
+- Verified all Source Files table entries are accurate — no missing or stale entries
 - Files changed: `CLAUDE.md`, `ARCHITECTURE.md`
 - **Learnings for future iterations:**
-  - Documentation audit stories should cross-reference all previous stories in the PRD to identify behavioral changes that need docs updates
-  - The Known Limitations section is particularly important to review after hardening — items get fixed but the docs don't automatically update
-  - When adding error handling, document it in both the feature section (MCP Server) and remove it from the limitations section
+  - Documentation-only stories don't require build changes but should still verify build+tests pass to confirm no accidental edits
+  - When verifying Source Files tables, check actual file contents — descriptions may go stale after refactoring stories
+  - The "No DAW automation recording" limitation is fundamental to the MVP architecture, not a bug — the wrapper has no exposed parameters for the DAW to automate
 ---

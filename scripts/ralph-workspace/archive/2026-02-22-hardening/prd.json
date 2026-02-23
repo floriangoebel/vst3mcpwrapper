@@ -1,0 +1,166 @@
+{
+  "project": "VST3MCPWrapper",
+  "branchName": "ralph/quality-review",
+  "description": "Quality Review — Fix data race bug, improve code quality (bounded queue, message constants, null guards, compiler warnings, write validation), expand test coverage (process edge cases, API forwarding, IComponentHandler), sync documentation",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Fix data race on wrapperActive_/wrapperProcessing_",
+      "description": "As a developer, I want wrapperActive_ and wrapperProcessing_ to be atomic so that reads from the message thread don't race with writes from the main thread.",
+      "acceptanceCriteria": [
+        "In source/processor.h, change `bool wrapperActive_` and `bool wrapperProcessing_` to `std::atomic<bool>` (matching hostedActive_/hostedProcessing_ which are already atomic)",
+        "Update all reads/writes of these fields in processor.cpp to use appropriate memory ordering (relaxed is fine for flags)",
+        "Update ProcessorTestAccess in ALL test files that reference wrapperActive_/wrapperProcessing_ — the accessor must use .load()/.store() or implicit conversion",
+        "Build compiles without errors, all existing tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "wrapperActive_ is written in setActive() (main thread) and read in notify('LoadPlugin') handler (message thread). wrapperProcessing_ is written in setProcessing() (main thread) and read in notify('LoadPlugin') handler (message thread). This is a real data race. hostedActive_/hostedProcessing_ are already std::atomic<bool> — follow the same pattern. Check test files: test_processor_lifecycle.cpp, test_processor_process.cpp, and any others that use ProcessorTestAccess to access these fields."
+    },
+    {
+      "id": "US-002",
+      "title": "Extract message IDs to constexpr constants",
+      "description": "As a developer, I want message ID strings centralized in a header so that typos can't cause silent failures.",
+      "acceptanceCriteria": [
+        "Create source/messageids.h with constexpr const char* constants for all message IDs: 'LoadPlugin', 'UnloadPlugin', 'PluginLoaded'",
+        "Replace all string literal uses in source/processor.cpp and source/controller.cpp with the constants",
+        "Include messageids.h in both processor.cpp and controller.cpp",
+        "Add messageids.h to the plugin sources in CMakeLists.txt",
+        "Build compiles without errors, all existing tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Search for string literals 'LoadPlugin', 'UnloadPlugin', 'PluginLoaded' in processor.cpp and controller.cpp. These are used in sendMessage() calls and notify() handlers. Use a namespace like VST3MCPWrapper::MessageIds or just constants in the VST3MCPWrapper namespace. Also check test files — if tests use these string literals directly, update them too."
+    },
+    {
+      "id": "US-003",
+      "title": "Cap the parameter change queue",
+      "description": "As a developer, I want the parameter change queue to have a bounded size so that a misbehaving MCP client can't cause unbounded memory growth.",
+      "acceptanceCriteria": [
+        "In HostedPluginModule::pushParamChange(), check queue size before pushing",
+        "If queue size >= 10000, drop the new change and log a warning to stderr (once, not per drop — use a static or member flag)",
+        "Add a unit test that pushes 10001 changes and verifies the queue size is capped at 10000",
+        "Add a unit test that verifies normal pushes below the cap still work correctly",
+        "Build compiles without errors, all existing tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "The queue is in hostedplugin.h/cpp — paramQueue_ is a std::vector<ParamChange> guarded by paramMutex_. pushParamChange() currently pushes unconditionally. 10000 is a reasonable cap — a typical plugin has 100-500 parameters, so 10000 represents ~20-100 full sweeps queued. Use fprintf(stderr, ...) for the warning. Consider a bool flag like queueOverflowWarned_ to avoid spamming."
+    },
+    {
+      "id": "US-004",
+      "title": "Null pointer guard in setBusArrangements",
+      "description": "As a developer, I want setBusArrangements to guard against null input/output arrays with positive counts so that a buggy host can't crash the plugin.",
+      "acceptanceCriteria": [
+        "In Processor::setBusArrangements(), add null checks: if inputs is nullptr and numIns > 0, return kInvalidArgument",
+        "Similarly if outputs is nullptr and numOuts > 0, return kInvalidArgument",
+        "Add a unit test for null inputs with numIns > 0",
+        "Add a unit test for null outputs with numOuts > 0",
+        "Add a unit test for both null with zero counts (should still work — this is the 'reset' case)",
+        "Build compiles without errors, all existing tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "setBusArrangements() is in processor.cpp. It currently stores arrangements and forwards to hosted processor if present. The null+positive-count case would cause UB when accessing inputs[0] or outputs[0]. Add the guard at the top of the method before any array access. kInvalidArgument is the appropriate VST3 error code for bad parameters."
+    },
+    {
+      "id": "US-005",
+      "title": "Enable compiler warnings (-Wall -Wextra)",
+      "description": "As a developer, I want our compile targets to build with -Wall -Wextra so that potential issues are caught at compile time.",
+      "acceptanceCriteria": [
+        "Add -Wall -Wextra as PRIVATE compile options to the VST3MCPWrapper target in CMakeLists.txt",
+        "Add -Wall -Wextra as PRIVATE compile options to the VST3MCPWrapper_Tests target in tests/CMakeLists.txt",
+        "Add -Wno-unused-parameter to both targets (VST3 interface overrides have many unused params)",
+        "Fix any new warnings that appear in OUR source files (not in SDK or dependency code)",
+        "Build compiles without errors and without warnings on our source files, all tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Use target_compile_options(VST3MCPWrapper PRIVATE -Wall -Wextra -Wno-unused-parameter). PRIVATE ensures these flags only apply to our targets, not to dependencies. On Linux (GCC), -Wextra may trigger warnings about unused parameters in VST3 overrides — hence -Wno-unused-parameter. Check both Clang (macOS) and GCC (Linux) if possible. If there are warnings in SDK headers included in our files, use #pragma to suppress them locally rather than removing the warning flags."
+    },
+    {
+      "id": "US-006",
+      "title": "Validate numBytesWritten in writeStateHeader",
+      "description": "As a developer, I want writeStateHeader to validate write return values so that partial writes are detected instead of producing corrupt state.",
+      "acceptanceCriteria": [
+        "In stateformat.h writeStateHeader(), check the numBytesWritten output parameter after each stream->write() call",
+        "If numBytesWritten != expected size for any write, return kResultFalse",
+        "Add a unit test using a mock or limited-capacity stream that triggers a short write, verifying kResultFalse is returned",
+        "Existing state format tests still pass",
+        "Build compiles without errors, all tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "readStateHeader() already validates numBytesRead after each read() call (added during initial implementation). writeStateHeader() does NOT — it only checks the tresult return code. The pattern should be symmetric: after write(&magic, 4, &numBytesWritten), check numBytesWritten == 4. Use ResizableMemoryIBStream for the normal path (already used in tests). For the short-write test, you may need a custom IBStream mock that returns kResultOk but writes fewer bytes than requested."
+    },
+    {
+      "id": "US-007",
+      "title": "Test process() edge cases with hosted processor",
+      "description": "As a developer, I want tests covering process() edge cases so that unusual but valid processing scenarios are verified.",
+      "acceptanceCriteria": [
+        "Test: process() with processorReady_=false returns kResultOk without calling hosted processor",
+        "Test: process() with hostedActive_=false returns kResultOk without calling hosted processor",
+        "Test: process() with numSamples=0 still calls hosted processor (VST3 spec: 0-sample flush is valid)",
+        "Test: process() when hosted processor returns an error, that error is propagated as the return value",
+        "All new tests in test_processor_process.cpp",
+        "Build compiles without errors, all tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Use ProcessorTestAccess to set processorReady_ and hostedActive_ flags. For the 0-samples test, set up a valid ProcessData with numSamples=0 and verify the mock hosted processor's process() is still called. For error propagation, have the mock processor return kResultFalse and verify process() returns that same code. Existing tests already test the happy path — these are the edge cases."
+    },
+    {
+      "id": "US-008",
+      "title": "Test API forwarding (canProcessSampleSize, latency, tail)",
+      "description": "As a developer, I want tests verifying that canProcessSampleSize, getLatencySamples, and getTailSamples correctly forward to the hosted processor and return appropriate defaults when no plugin is loaded.",
+      "acceptanceCriteria": [
+        "Test: canProcessSampleSize() with no hosted plugin returns kResultTrue (default)",
+        "Test: canProcessSampleSize() forwards to hosted processor and returns its result",
+        "Test: getLatencySamples() with no hosted plugin returns 0",
+        "Test: getLatencySamples() forwards to hosted processor and returns its value",
+        "Test: getTailSamples() with no hosted plugin returns 0",
+        "Test: getTailSamples() forwards to hosted processor and returns its value",
+        "All new tests in test_processor_lifecycle.cpp",
+        "Build compiles without errors, all tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "These methods are in processor.cpp and conditionally forward to the hosted processor. When no hosted processor exists, they return safe defaults. Use ProcessorTestAccess to inject a mock hosted processor, then verify forwarding. For canProcessSampleSize, test with both kSample32 and kSample64. MockAudioProcessor in mock_vst3.h may need MOCK_METHOD entries for these methods if not already present."
+    },
+    {
+      "id": "US-009",
+      "title": "Test Controller IComponentHandler (performEdit, restartComponent)",
+      "description": "As a developer, I want tests verifying that the Controller's IComponentHandler implementation correctly queues parameter changes and forwards restartComponent to the DAW host.",
+      "acceptanceCriteria": [
+        "Add a MockComponentHandler class to tests/mocks/mock_vst3.h that implements IComponentHandler with GMock methods",
+        "Test: performEdit() calls pushParamChange() on HostedPluginModule (parameter change is queued)",
+        "Test: restartComponent() forwards to the DAW's IComponentHandler if one is set",
+        "Test: beginEdit()/endEdit() forward to the DAW's IComponentHandler",
+        "Create tests/test_controller_componenthandler.cpp for these tests",
+        "Add the new test file to tests/CMakeLists.txt",
+        "Build compiles without errors, all tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "The Controller implements IComponentHandler so the hosted plugin can call beginEdit/performEdit/endEdit/restartComponent on it. performEdit should queue a parameter change via HostedPluginModule::pushParamChange(). restartComponent should forward to the DAW's component handler (set via setComponentHandler). Testing this requires instantiating the Controller, setting up a mock DAW handler, and calling the IComponentHandler methods. The Controller is created via `new Controller()` + `initialize()` similar to the Processor pattern. The Controller's IComponentHandler interface can be accessed via queryInterface or direct cast."
+    },
+    {
+      "id": "US-010",
+      "title": "Documentation sync",
+      "description": "As a developer, I want CLAUDE.md and ARCHITECTURE.md to accurately reflect all changes from US-001 through US-009.",
+      "acceptanceCriteria": [
+        "messageids.h is listed in the Source Files table in CLAUDE.md",
+        "Atomic wrapperActive_/wrapperProcessing_ is documented in Threading Safety section",
+        "Parameter queue cap (10000) is mentioned in Parameter Change Flow or relevant section",
+        "Compiler warning flags are mentioned in Build section or CMake Quirks",
+        "writeStateHeader validation is mentioned alongside readStateHeader in State Persistence Format section",
+        "test_controller_componenthandler.cpp mentioned in relevant documentation if test files are listed",
+        "All factual claims in CLAUDE.md and ARCHITECTURE.md match the current code",
+        "Build compiles without errors, all tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "Cross-reference every change from US-001 through US-009 against CLAUDE.md and ARCHITECTURE.md. The convention is that documentation must stay in sync with code. Pay special attention to: Threading Safety section (US-001 atomics), Parameter Change Flow (US-003 queue cap), Source Files table (US-002 messageids.h), any test file listings. Do NOT remove or modify content that is still accurate — only add/update what changed."
+    }
+  ]
+}

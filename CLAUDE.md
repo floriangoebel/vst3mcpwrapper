@@ -18,7 +18,7 @@ DAW  <-->  VST3MCPWrapper (our plugin)  <-->  Hosted VST3 Plugin (e.g. Neutron 5
 
 **Dual-component VST3 plugin:**
 - **Processor** (`source/processor.h/cpp`): Owns the hosted plugin's `IComponent` and `IAudioProcessor`. Handles audio/MIDI passthrough. Drains the parameter change queue and injects changes into `ProcessData::inputParameterChanges`. Wraps `setState`/`getState` with a custom format that includes the hosted plugin path. Handles `"LoadPlugin"` messages from the controller.
-- **Controller** (`source/controller.h/cpp`): Owns the hosted plugin's `IEditController`. Implements `IComponentHandler` so the hosted plugin's GUI can route parameter changes back through us — `performEdit` queues changes via `pushParamChange()`, while `beginEdit`/`endEdit`/`restartComponent` forward to the DAW's host handler. Returns hosted GUI via `createView` when a plugin is loaded, or a drop zone `WrapperPlugView` when empty. Connects hosted component ↔ controller via `IConnectionPoint`/`ConnectionProxy`. Runs the MCP server. Provides `loadPlugin()` entry point for drag-and-drop and MCP tools.
+- **Controller** (`source/controller.h/cpp`): Owns the hosted plugin's `IEditController`. Implements `IComponentHandler` so the hosted plugin's GUI can route parameter changes back through us — `performEdit` queues changes via `pushParamChange()` but deliberately does **not** forward to the DAW's `componentHandler` (the wrapper exposes no parameters of its own, so DAW automation cannot record hosted plugin gestures; parameter values reach the audio processor via our queue → `ProcessData::inputParameterChanges` path instead). `beginEdit`/`endEdit`/`restartComponent` forward to the DAW's host handler. Returns hosted GUI via `createView` when a plugin is loaded, or a drop zone `WrapperPlugView` when empty. Connects hosted component ↔ controller via `IConnectionPoint`/`ConnectionProxy`. Runs the MCP server. Provides `loadPlugin()` entry point for drag-and-drop and MCP tools.
 - **HostedPluginModule** (`source/hostedplugin.h/cpp`): Singleton that holds the shared `VST3::Hosting::Module`, factory, hosted `IComponent` reference, and a thread-safe parameter change queue. Supports `load()`/`unload()` for dynamic plugin switching.
 - **WrapperPlugView** (`source/wrapperview.h`, `source/wrapperview.mm` / `source/wrapperview_linux.cpp`): Custom `IPlugView` implementation. On macOS, provides a native `NSView` drop zone that accepts `.vst3` bundle drag-and-drop from Finder. On Linux, a no-op stub (headless — plugin loading via MCP only). Shown when no hosted plugin is loaded.
 
@@ -41,7 +41,7 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `source/processor.h/cpp` | Audio processor — dynamic hosted component loading, audio/MIDI passthrough, wrapper state format, parameter injection |
 | `source/controller.h/cpp` | Edit controller — IComponentHandler, dynamic plugin loading, IConnectionPoint, MCP server, view management |
 | `source/hostedplugin.h/cpp` | Shared singleton — module/factory, load/unload, param change queue, hosted component sharing, UTF-16 helper |
-| `source/wrapperview.h` | WrapperPlugView — IPlugView drop zone interface (cross-platform header) |
+| `source/wrapperview.h` | WrapperPlugView — IPlugView drop zone interface (cross-platform header), includes inline COM methods (`addRef`/`release`/`queryInterface`) and `clearController()` for safe teardown |
 | `source/wrapperview.mm` | macOS WrapperPlugView — Drop zone NSView with Objective-C++ drag-and-drop |
 | `source/wrapperview_linux.cpp` | Linux WrapperPlugView — No-op stub, returns `kResultFalse` from `isPlatformTypeSupported` (headless/MCP-only) |
 | `source/messageids.h` | Constexpr message ID constants (`kLoadPlugin`, `kUnloadPlugin`, `kPluginLoaded`) — eliminates string literal duplication between processor and controller |
@@ -59,6 +59,7 @@ MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to 
 | `cmake/patch_mcp_version.cmake` | Build-time patch for cpp-mcp protocol version (2024-11-05 → 2025-03-26) |
 | `cmake/validate_bundle_linux.cmake` | CTest validation script — checks Linux VST3 bundle layout (directory structure + ELF shared object) |
 | `tests/helpers/processor_test_access.h` | Shared `ProcessorTestAccess` class — unified friend accessor for all Processor private members, used by all processor test files |
+| `tests/helpers/controller_test_access.h` | Shared `ControllerTestAccess` class — friend accessor for Controller private members (`activeView_`, `currentPluginPath_`, `hostedController_`), used by controller view and state tests |
 | `tests/helpers/test_helpers.h` | Shared `fillTChar()` helper — fills `TChar` arrays from `char16_t` literals, used by UTF-16 and MCP param tests |
 | `.mcp.json` | Project MCP server config — connects Claude Code to the running plugin |
 | `.vscode/tasks.json` | VS Code build tasks (Cmd+Shift+B to build) |
@@ -196,10 +197,14 @@ Controller::loadPlugin(path)
 - **Audio thread** uses `try_lock` to drain the parameter queue — never blocks
 - **MCP load/unload** use `MainThreadDispatcher` (abstracts `dispatch_async` on macOS / worker thread on Linux) + `std::promise/std::future` with a shared `alive` flag and 5-second timeout — prevents deadlock during shutdown (dispatched blocks check `alive` before accessing the controller; handlers time out if the main thread is blocked in `stop()`)
 - **Processor stores DAW state** — bus arrangements, activation, and processing flags are stored and replayed when loading a plugin mid-session (`wrapperActive_`, `wrapperProcessing_`, `storedInputArr_`/`storedOutputArr_`, `currentSetup_`). Replay happens in both the `notify("LoadPlugin")` path (runtime loading) and the `setState()` path (preset recall, undo).
-- **`wrapperActive_`/`wrapperProcessing_`/`hostedActive_`/`hostedProcessing_` are all `std::atomic<bool>`** — `wrapperActive_`/`wrapperProcessing_` are written on the main thread (`setActive`/`setProcessing`) and read on the message thread (`notify`); `hostedActive_`/`hostedProcessing_` are written on the main/message thread and read on the audio thread in `process()`. All use `std::memory_order_relaxed`.
+- **`processorReady_` uses release/acquire ordering** — it is a publication guard: when the store becomes visible (`true`), the audio thread must also see the fully-constructed `hostedProcessor_`, `hostedComponent_`, and all setup done in `loadHostedPlugin()`. The `release` store in `loadHostedPlugin()`/`unloadHostedPlugin()` synchronizes-with the `acquire` load in `process()`, establishing a happens-before relationship.
+- **`wrapperActive_`/`wrapperProcessing_`/`hostedActive_`/`hostedProcessing_` use `memory_order_relaxed`** — these are independent boolean flags that don't guard other non-atomic writes. `wrapperActive_`/`wrapperProcessing_` are written on the main thread (`setActive`/`setProcessing`) and read on the message thread (`notify`); `hostedActive_`/`hostedProcessing_` are written on the main/message thread and read on the audio thread in `process()`.
 - **`setProcessing` forwarding** — the wrapper overrides `setProcessing()` to forward to the hosted processor. This is critical: `AudioEffect::setProcessing()` is a no-op (`kNotImplemented`), so without forwarding, hosted plugins never get told to start processing.
 - **Bus activation** — only the first audio input, first audio output, and first event input bus are activated on the hosted plugin. Extra buses (sidechain, etc.) are explicitly deactivated since the wrapper doesn't provide ProcessData buffers for them.
 - **Latency/tail forwarding** — `getLatencySamples()`/`getTailSamples()` forward to hosted plugin
+- **`MainThreadDispatcher` naming caveat** — on macOS, tasks genuinely execute on the main thread via GCD `dispatch_get_main_queue()`. On Linux, tasks execute on a dedicated worker thread (not the actual main thread) — the name reflects macOS semantics where the abstraction originated. Correctness is unaffected: the key requirement is serialization of load/unload operations, not main-thread identity.
+- **`activeView_` is a raw observer pointer** — Controller creates `WrapperPlugView` and stores a non-ref-counted pointer in `activeView_`. The DAW owns the view's lifetime via COM ref-counting. `Controller::terminate()` breaks the back-pointer via `clearController()` to prevent use-after-free during unusual teardown orders (see US-006 in this review).
+- **Dual `currentPluginPath_` copies** — both Processor and Controller maintain independent `currentPluginPath_` members. The Processor's copy is accessed only on the message thread (in `notify`, `setState`, `getState`) so it needs no synchronization. The Controller's copy is guarded by `hostedControllerMutex_` because the MCP server thread reads it via `getCurrentPluginPath()`.
 
 See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi-instance roadmap.
 
@@ -207,6 +212,7 @@ See `ARCHITECTURE.md` for detailed threading model, hosting lifecycle, and multi
 
 - **Single instance only** — singleton architecture, one MCP server on a fixed port
 - **Linux is headless** — no GUI drop zone on Linux (`WrapperPlugView` is a no-op stub that returns `kResultFalse` from `isPlatformTypeSupported`). Plugin loading is MCP-only via `load_plugin` tool. Audio passthrough and all MCP tools work normally. Hosted plugin GUIs are not displayed.
+- **No DAW automation recording** — `performEdit()` queues parameter changes for the audio processor but does not forward to the DAW's `componentHandler`. The wrapper exposes no parameters of its own, so DAW automation cannot record hosted plugin parameter gestures. Parameter control is MCP-only.
 
 ## Ralph (Autonomous Agent Loop)
 

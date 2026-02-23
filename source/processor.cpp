@@ -2,13 +2,13 @@
 #include "pluginids.h"
 #include "messageids.h"
 #include "hostedplugin.h"
+#include "logging.h"
 #include "stateformat.h"
 
 #include "public.sdk/source/vst/hosting/parameterchanges.h"
 #include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/vst/ivstmessage.h"
 
-#include <cstdio>
 #include <cstring>
 
 using namespace Steinberg;
@@ -102,7 +102,7 @@ bool Processor::loadHostedPlugin(const std::string& path) {
         hostedProcessor_->setupProcessing(currentSetup_);
     }
 
-    processorReady_.store(true, std::memory_order_relaxed);
+    processorReady_.store(true, std::memory_order_release);
     return true;
 }
 
@@ -118,7 +118,7 @@ void Processor::replayDawStateOntoHosted() {
 }
 
 void Processor::unloadHostedPlugin() {
-    processorReady_.store(false, std::memory_order_relaxed);
+    processorReady_.store(false, std::memory_order_release);
 
     if (hostedComponent_) {
         if (hostedProcessing_.load(std::memory_order_relaxed)) {
@@ -202,7 +202,7 @@ tresult PLUGIN_API Processor::canProcessSampleSize(int32 symbolicSampleSize) {
 }
 
 tresult PLUGIN_API Processor::process(ProcessData& data) {
-    if (processorReady_.load(std::memory_order_relaxed) && hostedProcessor_ && hostedActive_.load(std::memory_order_relaxed)) {
+    if (processorReady_.load(std::memory_order_acquire) && hostedProcessor_ && hostedActive_.load(std::memory_order_relaxed)) {
         // Drain pending parameter changes from MCP/GUI and inject into ProcessData
         auto& pluginModule = HostedPluginModule::instance();
         drainBuffer_.clear();
@@ -299,13 +299,15 @@ tresult PLUGIN_API Processor::setState(IBStream* state) {
     // Load the plugin if needed
     if (!pluginPath.empty() && pluginPath != currentPluginPath_) {
         unloadHostedPlugin();
-        loadHostedPlugin(pluginPath);
-
-        // Replay activation and processing state — setState() can be called
-        // while the wrapper is already active (e.g., preset recall, undo).
-        // Without this, the hosted plugin is loaded but never activated,
-        // causing audio to silently fall through to passthrough.
-        replayDawStateOntoHosted();
+        if (loadHostedPlugin(pluginPath)) {
+            // Replay activation and processing state — setState() can be called
+            // while the wrapper is already active (e.g., preset recall, undo).
+            // Without this, the hosted plugin is loaded but never activated,
+            // causing audio to silently fall through to passthrough.
+            replayDawStateOntoHosted();
+        } else {
+            WRAPPER_LOG_ERROR("setState: failed to load plugin '%s' — continuing in passthrough mode", pluginPath.c_str());
+        }
     }
 
     // Forward remaining state to hosted component
@@ -342,7 +344,7 @@ tresult PLUGIN_API Processor::notify(IMessage* message) {
         uint32 size = 0;
         if (message->getAttributes()->getBinary("path", data, size) == kResultOk && size > 0) {
             if (!data) {
-                fprintf(stderr, "VST3MCPWrapper: getBinary returned kResultOk but data is nullptr\n");
+                WRAPPER_LOG_ERROR("getBinary returned kResultOk but data is nullptr");
                 return kResultOk;
             }
             std::string path(static_cast<const char*>(data), size);

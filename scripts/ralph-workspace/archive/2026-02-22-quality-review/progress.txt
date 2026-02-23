@@ -1,0 +1,147 @@
+# Ralph Progress Log
+Started: Sun Feb 22 07:06:18 PM CET 2026
+
+## Codebase Patterns
+- Build with tests: `cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON && cmake --build build --target VST3MCPWrapper_Tests`
+- Run tests: `ctest --test-dir build --output-on-failure`
+- ProcessorTestAccess is duplicated in each test file (test_processor_lifecycle.cpp, test_processor_process.cpp, etc.) — when changing Processor member types, update ALL copies
+- Atomic bools use `std::memory_order_relaxed` for flag-style reads/writes (no ordering guarantees needed between flags)
+- All four flags (wrapperActive_, wrapperProcessing_, hostedActive_, hostedProcessing_) are now `std::atomic<bool>` — keep them consistent
+- Parameter change queue is capped at 10000 (`kMaxParamQueueSize`) — overflow warning logged once per overflow episode, reset on plugin reload
+- Compiler warnings: `-Wall -Wextra -Wno-unused-parameter` on both plugin and test targets — fix warnings in our code only, ignore SDK/deps
+- Controller tests: do NOT call `initialize()` — it starts the MCP server. IComponentHandler methods work without initialization.
+- IPtr mocks: call `setComponentHandler(nullptr)` before stack-allocated mocks go out of scope (IPtr calls release() → segfault on destroyed mock)
+
+---
+
+## 2026-02-22 - US-001
+- Changed `bool wrapperActive_` and `bool wrapperProcessing_` to `std::atomic<bool>` in processor.h
+- Updated all reads/writes in processor.cpp to use `.load()/.store()` with `std::memory_order_relaxed`
+- Updated ProcessorTestAccess in test_processor_lifecycle.cpp and test_processor_process.cpp to use `.load(std::memory_order_relaxed)`
+- Files changed: source/processor.h, source/processor.cpp, tests/test_processor_lifecycle.cpp, tests/test_processor_process.cpp
+- **Learnings for future iterations:**
+  - ProcessorTestAccess is a friend class defined separately in each test file — must update all copies when changing Processor internals
+  - Only test_processor_lifecycle.cpp and test_processor_process.cpp reference wrapperActive_/wrapperProcessing_ — test_message_routing.cpp and test_processor_state.cpp have ProcessorTestAccess but don't use these fields
+---
+
+## 2026-02-22 - US-002
+- Created source/messageids.h with `VST3MCPWrapper::MessageIds` namespace containing `kLoadPlugin`, `kUnloadPlugin`, `kPluginLoaded`
+- Replaced all string literals in source/processor.cpp (3 occurrences) and source/controller.cpp (3 occurrences)
+- Updated tests/test_message_routing.cpp to use constants (5 occurrences)
+- Added messageids.h to CMakeLists.txt plugin sources
+- Files changed: source/messageids.h (new), source/processor.cpp, source/controller.cpp, tests/test_message_routing.cpp, CMakeLists.txt
+- **Learnings for future iterations:**
+  - Message ID strings are used in both processor.cpp and controller.cpp (sendMessage + notify handlers)
+  - test_message_routing.cpp also uses message ID strings in mock return values
+---
+
+## 2026-02-22 - US-003
+- Added `kMaxParamQueueSize = 10000` constexpr and `paramQueueOverflowWarned_` flag to HostedPluginModule
+- `pushParamChange()` now checks queue size before pushing; drops changes and logs warning (once) when at capacity
+- Reset overflow flag in `resetState()` so warning can fire again after plugin reload
+- Added two tests: `QueueCappedAt10000` (pushes 10001, verifies 10000) and `PushesBelowCapWork` (pushes 100, verifies all present)
+- Files changed: source/hostedplugin.h, source/hostedplugin.cpp, tests/test_param_queue.cpp
+- **Learnings for future iterations:**
+  - The param queue uses `paramChangeMutex_` (separate from the main `mutex_`), so overflow flag must be guarded by `paramChangeMutex_`
+  - Existing concurrent test pushes 4000 changes (4 threads x 1000) — safely below the 10000 cap
+---
+
+## 2026-02-22 - US-004
+- Added null pointer guard at top of `Processor::setBusArrangements()` — returns `kInvalidArgument` if inputs is nullptr with numIns > 0, or outputs is nullptr with numOuts > 0
+- Added 3 tests in test_processor_lifecycle.cpp: RejectsNullInputs, RejectsNullOutputs, AcceptsNullWithZeroCounts
+- Files changed: source/processor.cpp, tests/test_processor_lifecycle.cpp
+- **Learnings for future iterations:**
+  - `kInvalidArgument` is the standard VST3 error code for bad parameters (available from pluginterfaces headers)
+  - `setBusArrangements` uses raw pointer + count pattern — always guard before `assign(ptr, ptr + count)`
+---
+
+## 2026-02-22 - US-005
+- Added `target_compile_options(... PRIVATE -Wall -Wextra -Wno-unused-parameter)` to both VST3MCPWrapper (CMakeLists.txt) and VST3MCPWrapper_Tests (tests/CMakeLists.txt)
+- Fixed 2 warnings in our source files:
+  - `source/wrapperview.h`: Made `~WrapperPlugView()` virtual (was non-virtual on polymorphic class, `-Wdelete-non-virtual-dtor`)
+  - `tests/test_mcp_server_integration.cpp`: Removed unused `startedOk` variable (`-Wunused-but-set-variable`)
+- Files changed: CMakeLists.txt, tests/CMakeLists.txt, source/wrapperview.h, tests/test_mcp_server_integration.cpp
+- **Learnings for future iterations:**
+  - Only our source files produce warnings — SDK and deps are not affected by PRIVATE compile options
+  - `-Wno-unused-parameter` is essential because VST3 interface overrides have many unused params
+  - WrapperPlugView destructor must be virtual since the class is polymorphic (inherits from IPlugView/IPlugFrame with virtual methods)
+---
+
+## 2026-02-22 - US-006
+- Added `numBytesWritten` validation after each `stream->write()` call in `writeStateHeader()` (stateformat.h), matching the existing pattern in `readStateHeader()`
+- Created `LimitedCapacityStream` mock IBStream in test_stateformat.cpp — returns `kResultOk` but short-writes when capacity is exhausted
+- Added 5 tests: short write on magic, version, pathLen, path data, and a positive test confirming success with sufficient capacity
+- Files changed: source/stateformat.h, tests/test_stateformat.cpp
+- **Learnings for future iterations:**
+  - `ResizableMemoryIBStream` always succeeds (unbounded buffer) — to test short writes, a custom IBStream mock with fixed capacity is needed
+  - IBStream `write()` returning `kResultOk` does NOT guarantee all bytes were written — always check `numBytesWritten`
+  - The header is 12 bytes (4 magic + 4 version + 4 pathLen) plus the path data
+---
+
+## 2026-02-22 - US-007
+- Added 4 edge case tests to test_processor_process.cpp:
+  - `ProcessorNotReadySkipsHostedProcessor`: processorReady_=false → passthrough, hosted not called
+  - `HostedNotActiveSkipsHostedProcessor`: hostedActive_=false → passthrough, hosted not called
+  - `ZeroSampleFlushCallsHostedProcessor`: numSamples=0 still calls hosted (VST3 spec flush)
+  - `HostedProcessorErrorIsPropagated`: hosted returns kResultFalse → process() returns kResultFalse
+- Files changed: tests/test_processor_process.cpp
+- **Learnings for future iterations:**
+  - The process() guard condition is `processorReady_ && hostedProcessor_ && hostedActive_` — all three must be true for hosted path
+  - EXPECT_CALL with Times(0) verifies a mock method is NOT called — useful for skip/bypass tests
+  - Zero-sample flush is a valid VST3 scenario (parameter flush without audio) — process() must still forward to hosted
+---
+
+## 2026-02-22 - US-008
+- Added 7 tests to test_processor_lifecycle.cpp covering API forwarding:
+  - `CanProcessSampleSize32WithoutHostedPlugin`: returns kResultTrue (32-bit default)
+  - `CanProcessSampleSize64WithoutHostedPlugin`: returns kResultFalse (no 64-bit without hosted plugin)
+  - `CanProcessSampleSizeForwardsToHostedProcessor`: forwards both kSample32 and kSample64 to mock
+  - `GetLatencySamplesReturnsZeroWithoutHostedPlugin`: returns 0 default
+  - `GetLatencySamplesForwardsToHostedProcessor`: forwards and returns mock's value (256)
+  - `GetTailSamplesReturnsZeroWithoutHostedPlugin`: returns 0 default
+  - `GetTailSamplesForwardsToHostedProcessor`: forwards and returns mock's value (1024)
+- Files changed: tests/test_processor_lifecycle.cpp
+- **Learnings for future iterations:**
+  - MockAudioProcessor already has MOCK_METHOD entries for canProcessSampleSize, getLatencySamples, getTailSamples — no mock changes needed
+  - canProcessSampleSize without hosted plugin only supports kSample32 (returns kResultFalse for kSample64)
+  - getLatencySamples/getTailSamples return uint32, not tresult — use 0u comparison
+---
+
+## 2026-02-22 - US-009
+- Added `MockComponentHandler` to tests/mocks/mock_vst3.h (IComponentHandler with GMock methods)
+- Updated `beginEdit()`/`endEdit()` in controller.cpp to forward to the DAW's component handler (were no-ops)
+- Created tests/test_controller_componenthandler.cpp with 6 tests:
+  - `PerformEditQueuesParamChange`: verifies pushParamChange() is called and param appears in drain
+  - `RestartComponentForwardsToDawHandler`: verifies forwarding to mock DAW handler
+  - `RestartComponentReturnsOkWithoutDawHandler`: verifies safe no-op when no handler
+  - `BeginEditForwardsToDawHandler`: verifies forwarding
+  - `EndEditForwardsToDawHandler`: verifies forwarding
+  - `BeginEndEditReturnOkWithoutDawHandler`: verifies safe no-op
+- Added test file and controller.cpp + wrapperview_linux.cpp to tests/CMakeLists.txt
+- Files changed: source/controller.cpp, tests/mocks/mock_vst3.h, tests/test_controller_componenthandler.cpp, tests/CMakeLists.txt
+- **Learnings for future iterations:**
+  - Controller tests should NOT call initialize() — it starts the MCP server which binds port 8771 and is heavyweight. IComponentHandler methods work without it.
+  - `componentHandler` (from EditController base) is an `IPtr<IComponentHandler>` — must call `setComponentHandler(nullptr)` before stack-allocated mocks go out of scope, or segfault on the IPtr's release()
+  - controller.cpp links against wrapperview — on Linux, wrapperview_linux.cpp must be added to test sources
+  - `beginEdit`/`endEdit` now forward to the DAW host handler (enables proper automation recording for hosted plugin GUI gestures)
+---
+
+## 2026-02-22 - US-010
+- Synced CLAUDE.md and ARCHITECTURE.md with all changes from US-001 through US-009
+- CLAUDE.md changes:
+  - Added `source/messageids.h` to Source Files table
+  - Updated Threading Safety: all four flags (`wrapperActive_`, `wrapperProcessing_`, `hostedActive_`, `hostedProcessing_`) documented as `std::atomic<bool>` with `memory_order_relaxed`
+  - Added queue cap (10,000 / `kMaxParamQueueSize`) to Parameter Change Flow description
+  - Added `-Wall -Wextra -Wno-unused-parameter` to CMake Quirks section
+  - Updated `stateformat.h` description to mention write validation (`numBytesWritten` checks)
+  - Updated Controller description to mention `beginEdit`/`endEdit`/`restartComponent` forwarding to DAW host
+- ARCHITECTURE.md changes:
+  - Changed `bool wrapperActive_`/`wrapperProcessing_` to `std::atomic<bool>` in Stored State for Replay code block
+  - Updated description to note all four flags are atomic with relaxed ordering
+  - Added queue cap info to Parameter Change Flow
+  - Added write validation note to State Format section
+- Files changed: CLAUDE.md, ARCHITECTURE.md
+- **Learnings for future iterations:**
+  - Documentation-only stories are good final steps to catch inconsistencies after a batch of code changes
+  - ARCHITECTURE.md has code blocks that must be kept in sync with actual struct definitions (e.g., `bool` vs `std::atomic<bool>`)
+---

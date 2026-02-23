@@ -220,3 +220,26 @@ TEST_F (ProcessorStateTest, SetStateWithSamePathDoesNotReload)
     // Path should remain the same (no unload/reload occurred)
     EXPECT_EQ (ProcessorTestAccess::currentPluginPath (*processor_), testPath);
 }
+
+//------------------------------------------------------------------------
+// setState() with nonexistent plugin path returns kResultOk and stays
+// in passthrough mode (processorReady_ remains false)
+//------------------------------------------------------------------------
+TEST_F (ProcessorStateTest, SetStateWithNonexistentPluginReturnsOkAndPassesThrough)
+{
+    const std::string fakePath = "/nonexistent/path/FakePlugin.vst3";
+
+    ResizableMemoryIBStream stream;
+    EXPECT_EQ (writeStateHeader (&stream, fakePath), kResultOk);
+    stream.seek (0, IBStream::kIBSeekSet, nullptr);
+
+    auto result = processor_->setState (&stream);
+
+    // Wrapper state header was valid — setState returns success even though
+    // the plugin couldn't be loaded (passthrough is the correct fallback)
+    EXPECT_EQ (result, kResultOk);
+
+    // Plugin load failed — processor should be in passthrough mode
+    EXPECT_FALSE (ProcessorTestAccess::processorReady (*processor_));
+    EXPECT_TRUE (ProcessorTestAccess::currentPluginPath (*processor_).empty ());
+}

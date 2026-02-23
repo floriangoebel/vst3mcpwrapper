@@ -18,7 +18,7 @@
         "Build compiles without errors, all existing tests pass"
       ],
       "priority": 1,
-      "passes": true,
+      "passes": false,
       "notes": "processorReady_ is not just a flag — it's a publication guard. When the store becomes visible (true), the audio thread must also see the writes to hostedProcessor_, hostedComponent_, and all setup done in loadHostedPlugin(). memory_order_relaxed provides no such guarantee — the audio thread could see processorReady_=true but stale nullptr for hostedProcessor_. The release store synchronizes-with the acquire load, establishing a happens-before relationship. The other atomic bools (hostedActive_, hostedProcessing_, wrapperActive_, wrapperProcessing_) are simple independent flags that don't guard other non-atomic writes, so relaxed is correct for them. Search for ALL uses of processorReady_ with: grep -n 'processorReady_' source/processor.cpp source/processor.h"
     },
     {
@@ -34,7 +34,7 @@
         "Build compiles without errors, all existing tests pass"
       ],
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "notes": "Currently hostedplugin.cpp line 118 uses fprintf(stderr, 'VST3MCPWrapper: ...') with a colon prefix, while the WRAPPER_LOG macros use '[VST3MCPWrapper] ...' with brackets. The controller.cpp MCP server error handler (try-catch in start()) also uses fprintf. Search with: grep -rn 'fprintf(stderr' source/ — convert all hits to use the macros from logging.h. On macOS, this routes logs to os_log instead of stderr, which is the intended behavior. Don't touch test files — tests may use fprintf for their own output."
     },
     {
@@ -50,7 +50,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 3,
-      "passes": true,
+      "passes": false,
       "notes": "The current implementation at hostedplugin.cpp:136-152 handles only BMP code points (up to 3-byte UTF-8). UTF-16 surrogate pairs encode code points U+10000-U+10FFFF as two 16-bit values: high surrogate (0xD800-0xDBFF) + low surrogate (0xDC00-0xDFFF). Formula: codepoint = 0x10000 + (high - 0xD800) * 0x400 + (low - 0xDC00). Then encode as 4-byte UTF-8: F0 xx xx xx. While VST3 plugin names rarely contain emoji, parameter names from creative plugins (e.g. 🎵) could. The existing test file test_utf16_conversion.cpp has tests for ASCII, German umlauts, CJK, empty strings, and max-length strings — add the surrogate pair tests alongside these."
     },
     {
@@ -64,7 +64,7 @@
         "Build compiles without errors, all existing tests pass"
       ],
       "priority": 4,
-      "passes": true,
+      "passes": false,
       "notes": "In controller.cpp, `std::chrono::seconds(5)` appears at lines 115 and 141 (load_plugin and unload_plugin tool handlers). These are the same policy — 'how long to wait for the main thread dispatcher to complete a load/unload.' A named constant makes the policy explicit and changeable in one place. The MCP server version at controller.cpp line 43 is hardcoded as '0.1.0' while version.h defines kPluginVersion. These should either be the same constant or explicitly separate with a comment explaining why. Search for other magic literals with: grep -rn 'seconds(' source/ and grep -rn '8771' source/"
     },
     {
@@ -81,7 +81,7 @@
         "If wrapperview.mm is not compilable on Linux (it's Obj-C++), verify the deduplication doesn't break the macOS build by checking that wrapperview.h remains valid C++ (no Obj-C dependencies)"
       ],
       "priority": 5,
-      "passes": true,
+      "passes": false,
       "notes": "wrapperview.mm lines 315-342 and wrapperview_linux.cpp lines 105-132 contain identical addRef(), release(), and queryInterface() implementations. The WrapperPlugView class is already declared in wrapperview.h — the COM methods can be defined inline there since they don't depend on platform APIs. Check wrapperview.h first to see what's already declared there vs what's implemented in the .mm/.cpp files. Also check: tresult queryInterface(const TUID, void**), uint32 addRef(), uint32 release(). isPlatformTypeSupported(), attached(), removed(), onSize(), etc. are platform-specific and must remain in the .mm/.cpp files."
     },
     {
@@ -97,7 +97,7 @@
         "Build compiles without errors, all existing tests pass"
       ],
       "priority": 6,
-      "passes": true,
+      "passes": false,
       "notes": "The current destructor in wrapperview_linux.cpp line 12-14 and wrapperview.mm line 127-129 does `if (controller_) controller_->activeView_ = nullptr`. This guards against nullptr passed to the constructor, but NOT against the Controller being destroyed while the view still exists. In normal operation the DAW destroys views before the plugin, but during host crashes or unusual teardown orders this is a use-after-free. The simplest fix: have Controller::terminate() call `if (activeView_) activeView_->controller_ = nullptr;` to break the back-pointer. Then the destructor's existing null check becomes sufficient. This is a known pattern for COM observer pointers."
     },
     {
@@ -115,7 +115,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 7,
-      "passes": true,
+      "passes": false,
       "notes": "Controller::createView() is at controller.cpp line 220-228. It creates a WrapperPlugView (or returns the hosted view if a plugin is loaded). Testing without initialize() avoids MCP server startup — but createView may depend on some controller state. Check what createView actually needs. On Linux, WrapperPlugView::isPlatformTypeSupported returns kResultFalse (headless), but createView should still return a valid IPlugView object. The DAW calls isPlatformTypeSupported separately. Remember: do NOT call initialize() on the Controller in tests — it starts the MCP server. Access activeView_ via friend class if needed (WrapperPlugView is already a friend of Controller)."
     },
     {
@@ -132,7 +132,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 8,
-      "passes": true,
+      "passes": false,
       "notes": "Controller::setComponentState() reads the wrapper state format (magic, version, path) and if a plugin path is present, attempts to set up the hosted controller. On Linux without a real VST3 plugin, the setupHostedController path will fail at HostedPluginModule::load() — but we can still test: (1) the state parsing works, (2) empty path is handled gracefully, (3) corrupt state is rejected. Use writeStateHeader() from stateformat.h to create valid test state, and ResizableMemoryIBStream for the stream. The controller does NOT need initialize() for setComponentState to work — it reads from the stream and calls setupHostedController internally. Check controller.cpp to see what setComponentState actually does step by step."
     },
     {
@@ -148,7 +148,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 9,
-      "passes": true,
+      "passes": false,
       "notes": "processor.cpp lines 300-308: loadHostedPlugin(pluginPath) is called but the bool return is discarded. If the load fails, replayDawStateOntoHosted() is called anyway (line 308) — this is harmless (hostedComponent_ is null, so replay is a no-op) but wasteful and confusing. The fix is simple: `bool loaded = loadHostedPlugin(pluginPath); if (!loaded) { WRAPPER_LOG_ERROR('...'); } else { replayDawStateOntoHosted(); }`. We do NOT want setState to return an error because the wrapper state header was valid — the DAW should not see an error for 'plugin not installed on this machine'. The existing test_processor_state.cpp has tests for setState — add the failure case there."
     },
     {
@@ -165,7 +165,7 @@
         "Build compiles without errors, all tests pass"
       ],
       "priority": 10,
-      "passes": true,
+      "passes": false,
       "notes": "This story captures documentation gaps found during the code review. The key undocumented decisions are: (1) performEdit not forwarding to DAW — this is intentional to avoid double-firing (the hosted plugin's own IComponentHandler call already goes to the DAW in the non-wrapped case, but in our wrapper we intercept it and only queue for the audio thread). (2) The 'MainThread' dispatcher naming is misleading on Linux — it's a worker thread, not the main thread. The macOS impl genuinely dispatches to the main thread via GCD. (3) activeView_ lifetime is fragile by design — COM observer pattern without ref-counting. (4) Dual currentPluginPath_ is necessary because the processor and controller operate on different threading domains. Review all changes from US-001 through US-009 to ensure nothing else needs documenting."
     }
   ]

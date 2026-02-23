@@ -73,8 +73,13 @@ private:
     Steinberg::FUnknown* hostContext_ = nullptr;
     std::string currentPluginPath_;
 
-    class WrapperPlugView* activeView_ = nullptr;  // Tracked for in-place view switching
+    // Raw observer pointer — Controller creates WrapperPlugView, but the DAW
+    // owns the view's lifetime via COM ref-counting.  Controller::terminate()
+    // clears this and the view's back-pointer so neither side writes through a
+    // dangling pointer during unusual teardown orders.
+    class WrapperPlugView* activeView_ = nullptr;
     friend class WrapperPlugView;
+    friend class ControllerTestAccess;
 
     mutable std::mutex hostedControllerMutex_;
     Steinberg::IPtr<Steinberg::Vst::IEditController> hostedController_;

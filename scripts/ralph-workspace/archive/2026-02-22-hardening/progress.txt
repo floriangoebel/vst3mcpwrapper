@@ -1,0 +1,167 @@
+## Codebase Patterns
+- C++20, CMake 3.25+, macOS + Linux. OBJCXX enabled conditionally via `enable_language(OBJCXX)` inside `if(APPLE)`
+- VST3 SDK fetched via FetchContent (v3.7.12_build_20)
+- cpp-mcp library target name is `mcp` (not `cpp_mcp`)
+- All source in source/, namespace VST3MCPWrapper
+- COM-style interfaces (addRef/release) — use IPtr<> for safe ref counting
+- Audio thread uses try_lock (never blocks) for parameter queue drain
+- `MainThreadDispatcher` abstracts dispatch_async (macOS) / worker thread (Linux) for MCP load/unload
+- State format: magic "VMCW" + version uint32 + pathLen uint32 + path + hosted state
+- Build: cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target VST3MCPWrapper
+- Test target: cmake --build build --target VST3MCPWrapper_Tests
+- Configure with tests: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+- MCP handler logic extracted into `source/mcp_param_handlers.h` and `source/mcp_plugin_handlers.h` — testable inline functions separate from Controller
+- Plugin management handlers are pure response-formatting functions (no VST3 mock dependencies) — pass strings/vectors as inputs
+- Test target links against `mcp` library and includes `${cpp_mcp_SOURCE_DIR}/include` + `${cpp_mcp_SOURCE_DIR}/common` for `mcp::json` (which is `nlohmann::ordered_json`)
+- `mcp::json` is defined in `mcp_message.h` as `using json = nlohmann::ordered_json` — include `mcp_message.h` for minimal JSON access
+- Run tests: ctest --test-dir build --output-on-failure
+- Google Test v1.14.0 via FetchContent in tests/CMakeLists.txt
+- Test target links: sdk, sdk_hosting, GTest::gtest, GTest::gtest_main, GTest::gmock
+- Use `fillTChar()` helper pattern to populate `TChar[]` buffers from `char16_t` literals in tests
+- Use `ResizableMemoryIBStream` (header-only from `public.sdk/source/vst/utility/memoryibstream.h`) for test IBStream — supports read/write/seek/rewind
+- State format read/write extracted into `writeStateHeader()`/`readStateHeader()` in `stateformat.h` — test these directly instead of going through Processor
+- HostedPluginModule is a singleton — tests sharing it must drain the param queue in SetUp/TearDown to avoid cross-test contamination
+- VST3 mock interfaces in `tests/mocks/mock_vst3.h` — MockComponent, MockAudioProcessor, MockEditController, MockMessage, MockAttributeList with working ref counting and queryInterface
+- Mock ref counting: starts at 1, addRef increments, release decrements (no self-delete — test owns the object)
+- `FUnknownPrivate::iidEqual()` for comparing TUIDs in queryInterface implementations
+- `${CMAKE_CURRENT_SOURCE_DIR}` added to test include dirs for `mocks/` subdirectory access
+- `friend class ProcessorTestAccess;` in processor.h for testing private state — define accessor class in VST3MCPWrapper namespace in test files
+- Stack-allocated mocks with IPtr: always clear the IPtr before the mock goes out of scope to avoid use-after-destroy
+- Processor can be instantiated with `new Processor()` + `initialize(nullptr)` for testing; call `terminate()` + `release()` in TearDown
+- `ParameterChanges` from sdk_hosting is a stack-local in process() — verify parameter data inside mock's process lambda, never after the call returns (use-after-free)
+- `ParameterValueQueue::addPoint` inserts sorted by `sampleOffset` — not in append order. `ParameterChanges::addParameterData` returns existing queue for duplicate param IDs
+- `ProcessorTestAccess` can be extended per test file with extra accessors (setProcessorReady, setHostedActive, etc.)
+- Platform-specific code pattern: header with templates + `postImpl()` declaration, .mm/.cpp files for platform implementations. Use `if(APPLE)...else()` in CMake for platform source files
+- `MainThreadDispatcher` owns the alive flag and dispatch logic — MCP handlers use `dispatcher.dispatch<R>(func, shutdownValue)` instead of raw dispatch_async + promise/future
+- Platform-specific views: `wrapperview.mm` (macOS, NSView drop zone) / `wrapperview_linux.cpp` (no-op stub). Same `wrapperview.h` header used on both platforms
+- MCP server constructor: `mcp::server(conf)` where `conf` is `mcp::server::configuration{host, port, name, version}` — no `(host, port)` shorthand in our version
+- MCP `sse_client` constructor takes a URL string: `mcp::sse_client("http://127.0.0.1:8771")` — NOT `(host, port)` args
+- MCP tool handler return value goes into `tool_result["content"]` — return just the content array (e.g., `json::array({{{"type","text"},{"text","..."}}})`), NOT the full `{content, isError}` envelope
+- MCP server `start(false)` = non-blocking (returns immediately), `start(true)` = blocking (run in a thread). Use `start(false)` for tests
+- Linux VST3 scan paths (SDK module_linux.cpp): $HOME/.vst3/, /usr/lib/vst3/, /usr/local/lib/vst3/, /proc/self/exe/../vst3/
+- Gate `#include <os/log.h>` and `os_log` calls behind `#ifdef __APPLE__`; use `fprintf(stderr, ...)` on Linux
+- On Linux, add `module_linux.cpp` + `linuxmain.cpp` from VST3 SDK in `else()` CMake branches
+- On Linux, `SMTG_ENABLE_VSTGUI_SUPPORT OFF` must be set (not just `SMTG_ADD_VSTGUI OFF`) to prevent VSTGUI from requiring X11 dev headers
+- On Linux, `SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF` and `SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF` needed alongside `SMTG_ADD_VST3_PLUGINS_SAMPLES OFF` etc.
+- On Linux, the `mcp` static library must have `POSITION_INDEPENDENT_CODE ON` since VST3 plugins are .so shared objects (set via `set_target_properties` after `FetchContent_MakeAvailable`)
+- GCC requires explicit `#include <optional>` — Clang/macOS may find it transitively but GCC does not
+- Linux VST3 bundle layout: `build/VST3/Debug/VST3MCPWrapper.vst3/Contents/x86_64-linux/VST3MCPWrapper.so`
+- Test suite is fully platform-independent — all tests pass identically on macOS (Clang) and Linux (GCC) with no platform gating needed
+- `$<TARGET_FILE:VST3MCPWrapper>` generator expression works in child-scope `add_test()` and `target_compile_definitions()` for referencing parent-scope targets
+- Own built plugin can be loaded as a hosted plugin in tests via `Module::create()` — safe because it only loads the .so and gets the factory, no component initialization. Use `TEST_PLUGIN_SO_PATH` compile definition to inject the path
+- `replayDawStateOntoHosted()` is a private method testable via `ProcessorTestAccess::callReplayDawState()` — since `loadHostedPlugin()` requires a real VST3 file, test replay by injecting mocks then calling the replay method directly
+- Linux VST3 bundle also includes `Contents/Resources/moduleinfo.json` (auto-generated by SDK moduleinfotool)
+
+---
+
+# Ralph Progress Log
+Started: new PRD — Codebase Hardening
+---
+
+## 2026-02-22 - US-001
+- Added `std::isfinite()` validation in `handleSetParameter()` before `std::clamp` — rejects NaN, +Inf, -Inf with `isError: true`
+- Added `#include <cmath>` to `mcp_param_handlers.h`
+- Added 3 unit tests: `SetParameterRejectsNaN`, `SetParameterRejectsPosInf`, `SetParameterRejectsNegInf`
+- Files changed: `source/mcp_param_handlers.h`, `tests/test_mcp_param_tools.cpp`
+- **Learnings for future iterations:**
+  - `std::clamp` with NaN is UB-adjacent: NaN comparisons are always false, so clamp returns NaN silently — always validate with `std::isfinite()` first
+  - MCP param handler tests use `MockEditController` from `tests/mocks/mock_vst3.h` with GMock expectations
+  - The error response pattern is `{"content", {{{"type","text"},{"text","..."}}}}, {"isError", true}`
+---
+
+## 2026-02-22 - US-002
+- Wrapped `Controller::startMCPServer()` in try-catch: on failure, logs to stderr with `fprintf` and resets `mcpServer_` to `nullptr`
+- Wrapped the `server->start(true)` thread lambda in `MCPServer::start()` with try-catch to prevent `std::terminate` if port binding throws inside the background thread
+- Added `DuplicatePortBindDoesNotCrash` integration test: starts two servers on the same port, verifies no crash and first server remains functional
+- Files changed: `source/controller.cpp`, `tests/test_mcp_server_integration.cpp`
+- **Learnings for future iterations:**
+  - `server->start(true)` runs in a `std::thread` — an uncaught exception in a thread calls `std::terminate()`, which is worse than propagating to the caller. Always wrap thread bodies in try-catch
+  - The MCP server is non-critical: audio passthrough must work even if the server fails to start. The `mcpServer_` being `nullptr` is the safe fallback state
+  - The port binding happens inside `start(true)` (httplib::Server::listen), not in the `mcp::server` constructor — both locations need error handling
+  - Integration tests using `mcp::sse_client` take ~10s each due to SSE connection overhead — keep the number of integration tests reasonable
+---
+
+## 2026-02-22 - US-003
+- Added null guard for `data` pointer after `getBinary()` returns `kResultOk` in `Processor::notify()` — if `data` is nullptr, logs warning to stderr and returns early
+- Added `#include <cstdio>` to `processor.cpp` for `fprintf`
+- Added unit test `LoadPluginMessageNullDataPointerNoCrash`: mocks `getBinary` returning `kResultOk` with `data=nullptr` and `size=10`, verifies no crash and no loading occurs
+- Files changed: `source/processor.cpp`, `tests/test_message_routing.cpp`
+- **Learnings for future iterations:**
+  - `std::string(nullptr, N)` is undefined behavior — always null-check pointers from SDK APIs even when the return code is `kResultOk`
+  - MockAttributeList's `getBinary` uses `SetArgReferee<1>(nullData)` to set the output pointer to nullptr in tests — no mock extension needed, GMock handles it natively
+  - The null guard pattern: check `!data` after `kResultOk && size > 0`, log with `fprintf(stderr, ...)`, return early
+---
+
+## 2026-02-22 - US-004
+- Removed `test_placeholder.cpp` (trivial `1+1=2` test) from `tests/` and `tests/CMakeLists.txt`
+- Rewrote `test_mock_vst3.cpp`: removed 5 trivial instantiation-only tests, added comprehensive queryInterface and ref counting tests for all 5 mock types
+- Added: `RefCountStartsAtOne` test verifying all mocks start at refCount=1
+- Added: `MockAudioProcessorQueryInterface` test (was missing)
+- Added: FUnknown::iid queryInterface coverage and unsupported IID (kNoInterface) tests for all mock types
+- Files changed: `tests/test_placeholder.cpp` (deleted), `tests/test_mock_vst3.cpp`, `tests/CMakeLists.txt`
+- **Learnings for future iterations:**
+  - The mock_vst3.h mocks all start refCount at 1 in their constructor — tests can verify this via `addRef()` returning 2
+  - MockAudioProcessor supports `IAudioProcessor::iid` and `FUnknown::iid` — not `IPluginBase::iid` (since IAudioProcessor doesn't extend IPluginBase)
+  - When removing test files, only need to delete the file and remove it from the `add_executable()` in `tests/CMakeLists.txt` — gtest_discover_tests handles the rest
+---
+
+## 2026-02-22 - US-005
+- Added 4 new tests to `test_processor_process.cpp` verifying DAW automation + MCP parameter change merging:
+  - `MergesDawAndMcpChangesForDifferentParams`: DAW param 100 + MCP param 42 → both appear in merged ParameterChanges
+  - `MergesDawAndMcpChangesForSameParam`: DAW param 50 + MCP param 50 → single queue with 2 points (sorted by sampleOffset)
+  - `OnlyDawChangesForwardedWhenMcpQueueEmpty`: Empty MCP queue → hosted processor receives original DAW inputParameterChanges directly (no merge path)
+  - `OnlyMcpChangesWhenDawInputParamChangesNull`: Null DAW inputParameterChanges + MCP changes → hosted processor sees only MCP changes, null pointer restored after
+- Existing tests (`ParamChangesInjectedIntoProcessData`, `OriginalInputParamChangesRestoredAfterProcess`) still pass alongside new tests
+- Files changed: `tests/test_processor_process.cpp`
+- **Learnings for future iterations:**
+  - `ParameterValueQueue::addPoint` inserts points sorted by `sampleOffset`, NOT in append order — when DAW has offset=5 and MCP has offset=0, the MCP point appears first in the queue
+  - `ParameterChanges::addParameterData` returns the existing queue if the param ID already exists (lines 176-182 in SDK source) — same-param changes from DAW and MCP merge into one queue
+  - When MCP queue is empty (`drainBuffer_.empty()`), process() takes the direct path (line 240) and forwards the original ProcessData without creating merged ParameterChanges — test this by verifying `d.inputParameterChanges == &dawChanges` pointer identity
+  - Always verify parameter data inside the mock process lambda — `ParameterChanges` is stack-local in process() and destroyed after return
+---
+
+## 2026-02-22 - US-006
+- Implemented the already-declared `replayDawStateOntoHosted()` method in `processor.cpp` — extracted duplicated replay logic from `notify("LoadPlugin")` and `setState()` into a single method
+- Added 5 new tests in `test_processor_lifecycle.cpp`:
+  - `ReplayActivatesHostedWhenWrapperActive`: wrapperActive=true → replay calls setActive(true) on hosted component
+  - `ReplayStartsProcessingWhenWrapperProcessing`: wrapperProcessing=true → replay calls setProcessing(true) on hosted processor
+  - `ReplayActivatesBeforeStartsProcessing`: both flags set → InSequence verifies setActive before setProcessing
+  - `ReplaySkipsActivationWhenWrapperNotActive`: wrapperActive=false → neither setActive nor setProcessing called (Times(0))
+  - `SetBusArrangementsForwardsToHostedProcessor`: verifies setBusArrangements forwards to hosted processor when present
+- Added `callReplayDawState()` accessor to ProcessorTestAccess for directly invoking the private replay method
+- Files changed: `source/processor.cpp`, `tests/test_processor_lifecycle.cpp`
+- **Learnings for future iterations:**
+  - `replayDawStateOntoHosted()` was declared in processor.h but never implemented — the replay was duplicated inline in notify() and setState(). Extracting it removes duplication and makes the replay testable
+  - Since `loadHostedPlugin()` requires a real VST3 file on disk (goes through HostedPluginModule singleton), replay tests can't go through the full notify() → loadHostedPlugin() → replay flow. Instead, test the replay method directly by: (1) setting wrapper flags via public API, (2) injecting mocks via ProcessorTestAccess, (3) calling replay via ProcessorTestAccess
+  - The bus arrangement replay happens inside `loadHostedPlugin()` (before activation), not in `replayDawStateOntoHosted()`. Test it via `setBusArrangements()` forwarding which uses the same code path
+  - `::testing::InSequence` is the GMock tool for verifying call ordering across different mock objects
+---
+
+## 2026-02-22 - US-007
+- Added 5 error path tests to `test_hostedplugin.cpp`:
+  - `FailedLoadLeavesModuleInCleanState`: comprehensive check that all getters return defaults after failed load (isLoaded, pluginPath, factory, controllerClassID, hostedComponent, paramQueue)
+  - `ValidLoadAfterFailedLoadSucceeds`: failed load followed by loading own built plugin — verifies no stuck state
+  - `UnloadWhenNothingLoadedIsNoOp`: unload on fresh singleton doesn't crash, state remains clean
+  - `DoubleUnloadIsNoOp`: two sequential unloads don't crash
+  - `LoadDifferentPathReplacesExistingPlugin`: loads own plugin, then loads different (invalid) path — verifies resetState() is called and old plugin is cleaned up
+- Added `TEST_PLUGIN_SO_PATH` compile definition in `tests/CMakeLists.txt` via `$<TARGET_FILE:VST3MCPWrapper>` generator expression
+- Added `add_dependencies(VST3MCPWrapper_Tests VST3MCPWrapper)` to ensure plugin is built before tests
+- Files changed: `tests/test_hostedplugin.cpp`, `tests/CMakeLists.txt`
+- **Learnings for future iterations:**
+  - Own built plugin can be used as a valid VST3 for integration tests — `Module::create()` only loads the .so and gets the factory, no component initialization occurs, so loading "ourselves" is safe
+  - Use `$<TARGET_FILE:VST3MCPWrapper>` as a compile definition to inject the SO path, then strip `/Contents/...` in C++ to get the .vst3 bundle directory
+  - `GTEST_SKIP()` is the right pattern for tests that need a resource that might not be available — prefer it over `#ifdef` guards inside test bodies
+  - `HostedPluginModule::load()` with `loaded_=true` and a different path calls `resetState()` before attempting the new load — if the new load fails, the old plugin is already gone (no rollback)
+---
+
+## 2026-02-22 - US-008
+- Updated `set_parameter` tool description in both CLAUDE.md and ARCHITECTURE.md to document NaN/Infinity validation (added by US-001)
+- Updated validation note below MCP tools tables to mention `std::isfinite` check for `set_parameter`
+- Removed "No error handling for MCP server port conflicts" from Known Limitations (fixed by US-002)
+- Added MCP server error handling behavior to MCP Server section: try-catch wraps server start, failure logged to stderr, plugin continues without MCP
+- Files changed: `CLAUDE.md`, `ARCHITECTURE.md`
+- **Learnings for future iterations:**
+  - Documentation audit stories should cross-reference all previous stories in the PRD to identify behavioral changes that need docs updates
+  - The Known Limitations section is particularly important to review after hardening — items get fixed but the docs don't automatically update
+  - When adding error handling, document it in both the feature section (MCP Server) and remove it from the limitations section
+---

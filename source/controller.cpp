@@ -15,6 +15,7 @@
 #include "public.sdk/source/vst/utility/memoryibstream.h"
 
 #include "logging.h"
+#include "version.h"
 
 #include "mcp_server.h"
 #include "mcp_tool.h"
@@ -28,6 +29,7 @@ using namespace Steinberg::Vst;
 namespace VST3MCPWrapper {
 
 static constexpr int kMCPServerPort = 8771;
+static constexpr auto kDispatchTimeout = std::chrono::seconds(5);
 
 // ---- MCP Server ----
 struct Controller::MCPServer {
@@ -40,7 +42,7 @@ struct Controller::MCPServer {
         conf.host = "127.0.0.1";
         conf.port = kMCPServerPort;
         conf.name = "VST3 MCP Wrapper";
-        conf.version = "0.1.0";
+        conf.version = FULL_VERSION_STR;
 
         server = std::make_unique<mcp::server>(conf);
 
@@ -112,7 +114,7 @@ struct Controller::MCPServer {
                     [controller, path]() { return controller->loadPlugin(path); },
                     std::string("Plugin is shutting down"));
 
-                if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+                if (future.wait_for(kDispatchTimeout) == std::future_status::timeout) {
                     return handleTimeout("Load plugin");
                 }
                 auto error = future.get();
@@ -138,7 +140,7 @@ struct Controller::MCPServer {
                 auto future = dispatcher.dispatch(
                     [controller]() { controller->unloadPlugin(); });
 
-                if (future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+                if (future.wait_for(kDispatchTimeout) == std::future_status::timeout) {
                     return handleTimeout("Unload plugin");
                 }
                 future.get();
@@ -212,6 +214,15 @@ tresult PLUGIN_API Controller::initialize(FUnknown* context) {
 }
 
 tresult PLUGIN_API Controller::terminate() {
+    // Break the back-pointer so the view's destructor won't write to a
+    // destroyed Controller.  Lifetime relationship: Controller creates
+    // WrapperPlugView, but the DAW owns the view's ref-count and may
+    // destroy it after Controller::terminate() during unusual teardown.
+    if (activeView_) {
+        activeView_->clearController();
+        activeView_ = nullptr;
+    }
+
     stopMCPServer();
 
     teardownHostedController();
@@ -220,7 +231,9 @@ tresult PLUGIN_API Controller::terminate() {
 }
 
 IPlugView* PLUGIN_API Controller::createView(FIDString name) {
-    // Always return our wrapper view — it handles both drop zone and hosted plugin
+    if (!name || !FIDStringsEqual(name, ViewType::kEditor))
+        return nullptr;
+
     auto* view = new WrapperPlugView(this);
     activeView_ = view;
     return view;

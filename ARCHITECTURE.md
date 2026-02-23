@@ -107,7 +107,7 @@ Four thread contexts exist:
 
 1. **Audio thread never blocks.** No mutexes, no allocation, no syscalls. Parameter queue uses `try_lock` — if the lock is held by a producer, changes arrive next buffer (~1-5ms later). The drain buffer (`drainBuffer_`) is pre-reserved to 256 entries in the Processor constructor to avoid heap allocation on the first `process()` call.
 2. **Main thread owns all VST3 lifecycle.** Plugin loading, component creation/destruction, view management — all on main thread.
-3. **MCP thread reads, main thread writes.** The MCP thread reads parameter state from the hosted controller (thread-safe via `IPtr` copy under mutex). Any mutation (load/unload) is dispatched via `MainThreadDispatcher` + `std::promise/std::future`. On macOS, the dispatcher uses `dispatch_async(dispatch_get_main_queue())`; on Linux, it uses a dedicated worker thread with a condition variable. Dispatched tasks check a shared `alive` flag before accessing the controller — preventing use-after-free during shutdown.
+3. **MCP thread reads, main thread writes.** The MCP thread reads parameter state from the hosted controller (thread-safe via `IPtr` copy under mutex). Any mutation (load/unload) is dispatched via `MainThreadDispatcher` + `std::promise/std::future`. On macOS, the dispatcher uses `dispatch_async(dispatch_get_main_queue())` — tasks genuinely execute on the main thread. On Linux, it uses a dedicated worker thread with a condition variable — despite the "MainThread" name, tasks do not run on the actual main thread. The name reflects macOS semantics where the abstraction originated; correctness requires serialization of load/unload operations, not main-thread identity. Dispatched tasks check a shared `alive` flag before accessing the controller — preventing use-after-free during shutdown.
 4. **Shutdown is safe.** `MainThreadDispatcher::shutdown()` sets the alive flag (`std::shared_ptr<std::atomic<bool>>`) to `false` before `server->stop()`, so dispatched tasks bail out instead of accessing the dying controller. In-flight MCP handlers use `wait_for` with a 5-second timeout, preventing deadlock if the dispatch thread is blocked. After the server thread exits, teardown proceeds.
 
 ### Parameter Change Flow
@@ -122,6 +122,8 @@ GUI performEdit ────┘                           try_lock on drain     
 
 MCP `set_parameter` also calls `setParamNormalized` on the hosted controller to update the GUI immediately. The queue is capped at 10,000 entries (`kMaxParamQueueSize`) to prevent unbounded memory growth; overflow is logged once per episode and resets on plugin reload.
 
+**Note:** `Controller::performEdit()` queues changes via `pushParamChange()` but deliberately does **not** forward to the DAW's `componentHandler`. The wrapper exposes no parameters of its own, so the DAW has no parameter IDs to record automation against. `beginEdit()`/`endEdit()` do forward to the DAW for gesture tracking. DAW automation recording of hosted plugin parameters is not supported in the MVP.
+
 ### Shutdown Sequence
 
 ```
@@ -135,6 +137,11 @@ Controller::terminate()       [main thread]
   ├── 4. teardownHostedController()
   └── 5. EditController::terminate()
 ```
+
+### Object Lifetime Notes
+
+- **`activeView_` (raw observer pointer):** Controller creates `WrapperPlugView` and stores a non-ref-counted pointer in `activeView_`. The DAW owns the view's lifetime via COM ref-counting and typically destroys views before terminating plugins. `Controller::terminate()` calls `activeView_->clearController()` to break the back-pointer before teardown, so neither side writes through a dangling pointer during unusual teardown orders.
+- **Dual `currentPluginPath_`:** Both Processor and Controller maintain independent `currentPluginPath_` members because they operate on different threading domains. The Processor's copy is accessed only on the message thread (in `notify`, `setState`, `getState`). The Controller's copy is guarded by `hostedControllerMutex_` because the MCP server thread reads it via `getCurrentPluginPath()`. Both are set during plugin loading and cleared during unloading, but are not synchronized with each other.
 
 ## VST3 Hosting Lifecycle
 
@@ -152,7 +159,9 @@ std::atomic<bool> hostedActive_;                  // written on main/msg thread,
 std::atomic<bool> hostedProcessing_;              // written on main/msg thread, read on audio thread
 ```
 
-Activation/processing state (`wrapperActive_`, `wrapperProcessing_`) is replayed onto the hosted component in both loading paths: `notify("LoadPlugin")` (runtime loading via MCP/drag-and-drop) and `setState()` (preset recall, undo, session restore while active). All four flags are `std::atomic<bool>` with `memory_order_relaxed`: `wrapperActive_`/`wrapperProcessing_` are written on the main thread and read on the message thread in `notify()`; `hostedActive_`/`hostedProcessing_` are written on the main/message thread and read on the audio thread in `process()`.
+Activation/processing state (`wrapperActive_`, `wrapperProcessing_`) is replayed onto the hosted component in both loading paths: `notify("LoadPlugin")` (runtime loading via MCP/drag-and-drop) and `setState()` (preset recall, undo, session restore while active).
+
+**Memory ordering:** `processorReady_` uses `memory_order_release` (store) / `memory_order_acquire` (load) because it is a publication guard — when the audio thread sees `processorReady_ == true`, it must also see the fully-constructed `hostedProcessor_`, `hostedComponent_`, and all setup done in `loadHostedPlugin()`. The other four flags (`wrapperActive_`, `wrapperProcessing_`, `hostedActive_`, `hostedProcessing_`) use `memory_order_relaxed` because they are independent boolean flags that don't guard other non-atomic writes.
 
 ### Loading Sequence
 
@@ -177,7 +186,7 @@ When a hosted plugin is loaded (via MCP, drag-and-drop, or session restore):
 5.  activateBus(bus 0 only, deactivate extras) — match wrapper's 1-in/1-out layout
 6.  setBusArrangements(stored)          — replay DAW's bus config
 7.  setupProcessing(currentSetup_)      — replay sample rate, block size
-8.  processorReady_ = true              — audio thread starts forwarding
+8.  processorReady_ = true (release)    — audio thread starts forwarding
 9.  setActive(true)  [if wrapper is active]
 10. setProcessing(true)  [if wrapper is processing]
 ```
@@ -195,7 +204,7 @@ Some plugins implement both `IComponent` and `IEditController` on the same class
 ### Unloading Sequence
 
 ```
-1.  processorReady_ = false             — audio thread stops forwarding
+1.  processorReady_ = false (release)   — audio thread stops forwarding
 2.  setProcessing(false)  [if processing]
 3.  setActive(false)  [if active]
 4.  component->terminate()

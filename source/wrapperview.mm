@@ -123,7 +123,8 @@ WrapperPlugView::WrapperPlugView(Controller* controller)
 WrapperPlugView::~WrapperPlugView() {
     removeHostedView();
     removeDropZone();
-    // Clear the controller's reference to us
+    // controller_ is cleared by Controller::terminate() if the controller is
+    // destroyed first, so this null check guards against use-after-free.
     if (controller_) {
         controller_->activeView_ = nullptr;
     }
@@ -308,36 +309,6 @@ tresult PLUGIN_API WrapperPlugView::resizeView(IPlugView* view, ViewRect* newSiz
         return hostFrame_->resizeView(this, newSize);
     }
     return kResultFalse;
-}
-
-// --- FUnknown ---
-
-tresult PLUGIN_API WrapperPlugView::queryInterface(const TUID iid, void** obj) {
-    if (FUnknownPrivate::iidEqual(iid, IPlugView::iid) ||
-        FUnknownPrivate::iidEqual(iid, FUnknown::iid)) {
-        addRef();
-        *obj = static_cast<IPlugView*>(this);
-        return kResultOk;
-    }
-    if (FUnknownPrivate::iidEqual(iid, IPlugFrame::iid)) {
-        addRef();
-        *obj = static_cast<IPlugFrame*>(this);
-        return kResultOk;
-    }
-    *obj = nullptr;
-    return kNoInterface;
-}
-
-uint32 PLUGIN_API WrapperPlugView::addRef() {
-    return ++refCount_;
-}
-
-uint32 PLUGIN_API WrapperPlugView::release() {
-    if (--refCount_ == 0) {
-        delete this;
-        return 0;
-    }
-    return refCount_;
 }
 
 } // namespace VST3MCPWrapper

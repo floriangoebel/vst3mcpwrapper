@@ -1,4 +1,5 @@
 #include "hostedplugin.h"
+#include "logging.h"
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 
@@ -115,8 +116,8 @@ void HostedPluginModule::pushParamChange(ParamID id, ParamValue value) {
     std::lock_guard<std::mutex> lock(paramChangeMutex_);
     if (pendingParamChanges_.size() >= kMaxParamQueueSize) {
         if (!paramQueueOverflowWarned_) {
-            fprintf(stderr, "VST3MCPWrapper: parameter change queue full (%zu), dropping changes\n",
-                    kMaxParamQueueSize);
+            WRAPPER_LOG_ERROR("parameter change queue full (%zu), dropping changes",
+                              kMaxParamQueueSize);
             paramQueueOverflowWarned_ = true;
         }
         return;
@@ -137,7 +138,28 @@ std::string utf16ToUtf8(const TChar* str, int maxLen) {
     std::string result;
     for (int i = 0; i < maxLen && str[i] != 0; ++i) {
         char16_t ch = static_cast<char16_t>(str[i]);
-        if (ch < 0x80) {
+        if (ch >= 0xD800 && ch <= 0xDBFF) {
+            // High surrogate — look for low surrogate
+            if (i + 1 < maxLen && str[i + 1] != 0) {
+                char16_t lo = static_cast<char16_t>(str[i + 1]);
+                if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                    // Valid surrogate pair → decode to code point above U+FFFF
+                    uint32_t cp = 0x10000 + (static_cast<uint32_t>(ch - 0xD800) << 10)
+                                  + (lo - 0xDC00);
+                    result += static_cast<char>(0xF0 | (cp >> 18));
+                    result += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                    result += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    result += static_cast<char>(0x80 | (cp & 0x3F));
+                    ++i; // consume the low surrogate
+                    continue;
+                }
+            }
+            // Lone high surrogate — replace with U+FFFD
+            result += "\xEF\xBF\xBD";
+        } else if (ch >= 0xDC00 && ch <= 0xDFFF) {
+            // Lone low surrogate — replace with U+FFFD
+            result += "\xEF\xBF\xBD";
+        } else if (ch < 0x80) {
             result += static_cast<char>(ch);
         } else if (ch < 0x800) {
             result += static_cast<char>(0xC0 | (ch >> 6));

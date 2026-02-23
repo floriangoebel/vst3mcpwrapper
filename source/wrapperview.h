@@ -22,6 +22,10 @@ public:
     explicit WrapperPlugView(Controller* controller);
     virtual ~WrapperPlugView();
 
+    // Called by Controller::terminate() to break the back-pointer before
+    // the controller is destroyed — prevents use-after-free in ~WrapperPlugView.
+    void clearController() { controller_ = nullptr; }
+
     // Switch from drop zone to the hosted plugin's view (in-place)
     void switchToHostedView(Steinberg::IPlugView* hostedView);
     // Switch back to drop zone (when plugin is unloaded)
@@ -66,5 +70,35 @@ private:
     static constexpr int kDefaultWidth = 400;
     static constexpr int kDefaultHeight = 300;
 };
+
+// --- FUnknown inline implementations (shared across platforms) ---
+
+inline Steinberg::tresult PLUGIN_API WrapperPlugView::queryInterface(const Steinberg::TUID iid, void** obj) {
+    if (Steinberg::FUnknownPrivate::iidEqual(iid, Steinberg::IPlugView::iid) ||
+        Steinberg::FUnknownPrivate::iidEqual(iid, Steinberg::FUnknown::iid)) {
+        addRef();
+        *obj = static_cast<Steinberg::IPlugView*>(this);
+        return Steinberg::kResultOk;
+    }
+    if (Steinberg::FUnknownPrivate::iidEqual(iid, Steinberg::IPlugFrame::iid)) {
+        addRef();
+        *obj = static_cast<Steinberg::IPlugFrame*>(this);
+        return Steinberg::kResultOk;
+    }
+    *obj = nullptr;
+    return Steinberg::kNoInterface;
+}
+
+inline Steinberg::uint32 PLUGIN_API WrapperPlugView::addRef() {
+    return ++refCount_;
+}
+
+inline Steinberg::uint32 PLUGIN_API WrapperPlugView::release() {
+    if (--refCount_ == 0) {
+        delete this;
+        return 0;
+    }
+    return refCount_;
+}
 
 } // namespace VST3MCPWrapper

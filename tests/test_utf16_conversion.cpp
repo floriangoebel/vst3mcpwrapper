@@ -176,4 +176,131 @@ TEST(Utf16ToUtf8, EmptyStringZeroMaxLen) {
     EXPECT_EQ(utf16ToUtf8(buf, 0), "");
 }
 
+// --- 4-byte UTF-8 sequences (surrogate pairs, code points U+10000+) ---
+
+TEST(Utf16ToUtf8, SurrogatePair_MusicalNote) {
+    // U+1F3B5 MUSICAL NOTE = surrogate pair D83C DFB5
+    // UTF-8: F0 9F 8E B5
+    TChar buf[128] = {};
+    buf[0] = 0xD83C; // high surrogate
+    buf[1] = 0xDFB5; // low surrogate
+    buf[2] = 0;
+    std::string result = utf16ToUtf8(buf);
+    EXPECT_EQ(result.size(), 4u);
+    EXPECT_EQ(static_cast<uint8_t>(result[0]), 0xF0);
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0x9F);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0x8E);
+    EXPECT_EQ(static_cast<uint8_t>(result[3]), 0xB5);
+}
+
+TEST(Utf16ToUtf8, SurrogatePair_MixedWithBMP) {
+    // "A" + U+1F3B5 + "B" = 'A' D83C DFB5 'B'
+    TChar buf[128] = {};
+    buf[0] = 'A';
+    buf[1] = 0xD83C; // high surrogate
+    buf[2] = 0xDFB5; // low surrogate
+    buf[3] = 'B';
+    buf[4] = 0;
+    std::string result = utf16ToUtf8(buf);
+    // 'A' = 1 byte, U+1F3B5 = 4 bytes, 'B' = 1 byte
+    EXPECT_EQ(result.size(), 6u);
+    EXPECT_EQ(result[0], 'A');
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0xF0);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0x9F);
+    EXPECT_EQ(static_cast<uint8_t>(result[3]), 0x8E);
+    EXPECT_EQ(static_cast<uint8_t>(result[4]), 0xB5);
+    EXPECT_EQ(result[5], 'B');
+}
+
+TEST(Utf16ToUtf8, SurrogatePair_LoneHighSurrogate) {
+    // High surrogate followed by a non-surrogate → replacement character
+    TChar buf[128] = {};
+    buf[0] = 0xD800; // lone high surrogate
+    buf[1] = 'A';    // not a low surrogate
+    buf[2] = 0;
+    std::string result = utf16ToUtf8(buf);
+    // U+FFFD (3 bytes) + 'A' (1 byte) = 4 bytes
+    EXPECT_EQ(result.size(), 4u);
+    EXPECT_EQ(static_cast<uint8_t>(result[0]), 0xEF);
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0xBF);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0xBD);
+    EXPECT_EQ(result[3], 'A');
+}
+
+TEST(Utf16ToUtf8, SurrogatePair_LoneHighSurrogateAtEnd) {
+    // High surrogate at end of string → replacement character
+    TChar buf[128] = {};
+    buf[0] = 0xD800; // lone high surrogate at end
+    buf[1] = 0;
+    std::string result = utf16ToUtf8(buf);
+    // U+FFFD = 3 bytes
+    EXPECT_EQ(result.size(), 3u);
+    EXPECT_EQ(static_cast<uint8_t>(result[0]), 0xEF);
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0xBF);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0xBD);
+}
+
+TEST(Utf16ToUtf8, SurrogatePair_LoneLowSurrogate) {
+    // Low surrogate without preceding high → replacement character
+    TChar buf[128] = {};
+    buf[0] = 'A';
+    buf[1] = 0xDC00; // lone low surrogate
+    buf[2] = 'B';
+    buf[3] = 0;
+    std::string result = utf16ToUtf8(buf);
+    // 'A' (1 byte) + U+FFFD (3 bytes) + 'B' (1 byte) = 5 bytes
+    EXPECT_EQ(result.size(), 5u);
+    EXPECT_EQ(result[0], 'A');
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0xEF);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0xBF);
+    EXPECT_EQ(static_cast<uint8_t>(result[3]), 0xBD);
+    EXPECT_EQ(result[4], 'B');
+}
+
+TEST(Utf16ToUtf8, SurrogatePair_BoundaryLow) {
+    // U+10000 = first supplementary code point = D800 DC00
+    // UTF-8: F0 90 80 80
+    TChar buf[128] = {};
+    buf[0] = 0xD800;
+    buf[1] = 0xDC00;
+    buf[2] = 0;
+    std::string result = utf16ToUtf8(buf);
+    EXPECT_EQ(result.size(), 4u);
+    EXPECT_EQ(static_cast<uint8_t>(result[0]), 0xF0);
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0x90);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0x80);
+    EXPECT_EQ(static_cast<uint8_t>(result[3]), 0x80);
+}
+
+TEST(Utf16ToUtf8, SurrogatePair_BoundaryHigh) {
+    // U+10FFFF = last valid code point = DBFF DFFF
+    // UTF-8: F4 8F BF BF
+    TChar buf[128] = {};
+    buf[0] = 0xDBFF;
+    buf[1] = 0xDFFF;
+    buf[2] = 0;
+    std::string result = utf16ToUtf8(buf);
+    EXPECT_EQ(result.size(), 4u);
+    EXPECT_EQ(static_cast<uint8_t>(result[0]), 0xF4);
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0x8F);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0xBF);
+    EXPECT_EQ(static_cast<uint8_t>(result[3]), 0xBF);
+}
+
+TEST(Utf16ToUtf8, SurrogatePair_HighSurrogateAtMaxLen) {
+    // High surrogate at maxLen boundary — low surrogate is beyond maxLen
+    TChar buf[128] = {};
+    buf[0] = 'A';
+    buf[1] = 0xD83C; // high surrogate at position 1
+    buf[2] = 0xDFB5; // low surrogate at position 2 — beyond maxLen=2
+    buf[3] = 0;
+    std::string result = utf16ToUtf8(buf, 2);
+    // 'A' (1 byte) + U+FFFD (3 bytes) = 4 bytes
+    EXPECT_EQ(result.size(), 4u);
+    EXPECT_EQ(result[0], 'A');
+    EXPECT_EQ(static_cast<uint8_t>(result[1]), 0xEF);
+    EXPECT_EQ(static_cast<uint8_t>(result[2]), 0xBF);
+    EXPECT_EQ(static_cast<uint8_t>(result[3]), 0xBD);
+}
+
 } // namespace VST3MCPWrapper

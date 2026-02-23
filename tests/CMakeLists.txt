@@ -26,6 +26,8 @@ add_executable(VST3MCPWrapper_Tests
     test_mcp_server_integration.cpp
     test_plugin_scanning.cpp
     test_controller_componenthandler.cpp
+    test_controller_view.cpp
+    test_controller_state.cpp
     test_passthrough_aliasing.cpp
     test_queue_overflow.cpp
     test_unload_cleanup.cpp
